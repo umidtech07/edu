@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { imageQuery, title, bullets } = await req.json();
+    const { imageQuery, title, bullets, minScore } = await req.json();
 
     if (!imageQuery || typeof imageQuery !== "string") {
       return NextResponse.json({ image: null });
@@ -26,7 +26,8 @@ export async function POST(req: Request) {
       Array.isArray(bullets) ? bullets : []
     );
 
-    if (!photo || score < 2) {
+    const threshold = typeof minScore === "number" ? minScore : 2;
+    if (!photo || score < threshold) {
       return NextResponse.json({ image: null });
     }
 

@@ -18,6 +18,20 @@ type Deck = {
 };
 
 export default function Home() {
+  const [showLanding, setShowLanding] = useState(true);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const visited = localStorage.getItem("cipher_visited");
+      if (visited) setShowLanding(false);
+    }
+  }, []);
+
+  function enterApp() {
+    localStorage.setItem("cipher_visited", "1");
+    setShowLanding(false);
+  }
+
   const [topic, setTopic] = useState("");
   const [deck, setDeck] = useState<Deck | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,7 +47,9 @@ export default function Home() {
   const [downloading, setDownloading] = useState(false);
 
   // per-slide pasted images (index → { dataUrl, credit })
-  const [pastedImages, setPastedImages] = useState<Record<number, { dataUrl: string; credit: string }>>({});
+  const [pastedImages, setPastedImages] = useState<
+    Record<number, { dataUrl: string; credit: string }>
+  >({});
 
   const slides = deck?.slides ?? [];
   const total = slides.length;
@@ -76,10 +92,10 @@ export default function Home() {
     const lastTwoStart = Math.max(0, n - 2);
     const first = result[0];
 
-    // Rule 1: last 2 slides borrow first slide's image if imageless
+    // Rule 1: last 2 slides borrow first slide's image if imageless (skip video slides)
     if (first?.image) {
       for (let i = lastTwoStart; i < n; i++) {
-        if (!result[i].image) {
+        if (!result[i].image && !result[i].youtubeVideoId) {
           result[i] = {
             ...result[i],
             image: first.image,
@@ -100,7 +116,9 @@ export default function Home() {
         .filter(({ i, s }) => !excluded.has(i) && !!s.image);
       const targets = result
         .map((s, i) => ({ s, i }))
-        .filter(({ i, s }) => !excluded.has(i) && !s.image);
+        .filter(
+          ({ i, s }) => !excluded.has(i) && !s.image && !s.youtubeVideoId
+        );
 
       if (sources.length > 0 && targets.length > 0) {
         const kws = (slide: Slide) =>
@@ -117,7 +135,10 @@ export default function Home() {
           const kw = kws(slide);
           for (const src of sources) {
             const overlap = [...kws(src.s)].filter((w) => kw.has(w)).length;
-            if (overlap > bestScore) { bestScore = overlap; best = src; }
+            if (overlap > bestScore) {
+              bestScore = overlap;
+              best = src;
+            }
           }
           result[i] = {
             ...result[i],
@@ -185,12 +206,19 @@ export default function Home() {
       setImagesLoading(true);
 
       // ── Step 2: Images + YouTube in parallel ───────────────────────────────
-      const visualSlides: Array<{ origIndex: number; title: string; bullets: string[]; imageQuery: string }> =
-        rawSlides
-          .map((s: any, i: number) => ({ ...s, origIndex: i }))
-          .filter((s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim());
+      const visualSlides: Array<{
+        origIndex: number;
+        title: string;
+        bullets: string[];
+        imageQuery: string;
+      }> = rawSlides
+        .map((s: any, i: number) => ({ ...s, origIndex: i }))
+        .filter(
+          (s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim()
+        );
 
-      // Primary mode: max 1 real Pexels photo (only try first visual slide)
+      // Slide 0 gets Pexels first; Stability is only a fallback if Pexels fails for it
+      // Primary mode: max 1 Pexels photo (try slide 0 first)
       const pexelTargets = isPrimary ? visualSlides.slice(0, 1) : visualSlides;
 
       // Start YouTube in parallel with images
@@ -213,6 +241,8 @@ export default function Home() {
                 imageQuery: slide.imageQuery,
                 title: slide.title,
                 bullets: slide.bullets,
+                // Slide 0 accepts any Pexels photo (score ≥ 0) to avoid Stability landing on the main slide
+                ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
             });
             const data = res.ok ? await res.json() : { image: null };
@@ -224,31 +254,42 @@ export default function Home() {
         })
       );
 
-      // ── Step 3: Fill rules after Pexels ───────────────────────────────────
+      // ── Step 3: Determine Stability target ────────────────────────────────
+      const pexelImageIndices = new Set(
+        pexelResults.filter((r) => r.hasImage).map((r) => r.index)
+      );
+
+      // Slide 0 always gets Pexels; if Pexels gave slide 0 an image → Stability
+      // goes to the first imageless slide after 0. Otherwise Stability covers slide 0.
+      let stabilityTargetIdx: number | null = null;
+      if (pexelImageIndices.has(0)) {
+        for (let i = 1; i < initSlides.length; i++) {
+          if (!pexelImageIndices.has(i)) {
+            stabilityTargetIdx = i;
+            break;
+          }
+        }
+      } else {
+        stabilityTargetIdx = 0;
+      }
+
+      // ── Step 4: Fill rules after Pexels ───────────────────────────────────
       setDeck((prev) =>
         prev ? { ...prev, slides: applyFillRules(prev.slides ?? []) } : prev
       );
       setImagesLoading(false); // Slides are ready — Stability runs in background
 
-      // ── Step 4: Stability AI — fire and forget (max 1/deck) ───────────────
-      const failedPexels = pexelResults.filter((r) => !r.hasImage);
-      const aiCandidates = isPrimary
-        ? [
-            ...failedPexels,
-            ...visualSlides
-              .slice(1)
-              .map((s) => ({ index: s.origIndex, hasImage: false })),
-          ]
-        : failedPexels;
-
-      if (aiCandidates.length > 0) {
-        const candidate = aiCandidates[0];
-        const slide = rawSlides[candidate.index];
-        setStabilityIdx(candidate.index);
+      // ── Step 5: Stability AI ───────────────────────────────────────────────
+      if (stabilityTargetIdx !== null) {
+        const stIdx = stabilityTargetIdx;
+        setStabilityIdx(stIdx);
         fetch("/api/generate/stability", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: slide.title, bullets: slide.bullets }),
+          body: JSON.stringify({
+            title: rawSlides[stIdx].title,
+            bullets: rawSlides[stIdx].bullets,
+          }),
         })
           .then((res) => (res.ok ? res.json() : { image: null }))
           .then((data) => {
@@ -256,10 +297,8 @@ export default function Home() {
             if (data.image) {
               setDeck((prev) => {
                 if (!prev?.slides) return prev;
-                // Don't overwrite a slide that was assigned a YouTube video
-                if (prev.slides[candidate.index]?.youtubeVideoId) return prev;
                 const slides = [...prev.slides];
-                slides[candidate.index] = { ...slides[candidate.index], ...data };
+                slides[stIdx] = { ...slides[stIdx], ...data };
                 return { ...prev, slides: applyFillRules(slides) };
               });
             }
@@ -270,16 +309,18 @@ export default function Home() {
           });
       }
 
-      // ── Step 5: YouTube ────────────────────────────────────────────────────
+      // ── Step 6: YouTube — place in first imageless slide after 0, skipping stability slot ──
       const { videoId } = await youtubePromise;
       if (videoId) {
         setDeck((prev) => {
           if (!prev?.slides) return prev;
           const slides = [...prev.slides];
-          const firstImageless = slides.findIndex((s) => !s.image);
-          if (firstImageless !== -1) {
-            slides[firstImageless] = {
-              ...slides[firstImageless],
+          const youtubeTarget = slides.findIndex(
+            (s, i) => i > 0 && !s.image && i !== stabilityTargetIdx
+          );
+          if (youtubeTarget !== -1) {
+            slides[youtubeTarget] = {
+              ...slides[youtubeTarget],
               youtubeVideoId: videoId,
             };
           }
@@ -370,8 +411,115 @@ export default function Home() {
     return `${idx + 1} / ${total}`;
   }, [idx, total]);
 
+  if (showLanding) {
+    return (
+      <main
+        className="min-h-screen flex flex-col items-center justify-center px-6"
+        style={{ background: "#f4f6f9" }}
+      >
+        <style>{`
+          @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+          .landing-fade { animation: fadeUp 0.5s ease-out both; }
+          .landing-fade-2 { animation: fadeUp 0.5s ease-out 0.15s both; }
+          .landing-fade-3 { animation: fadeUp 0.5s ease-out 0.3s both; }
+          .landing-fade-4 { animation: fadeUp 0.5s ease-out 0.45s both; }
+          .landing-btn:active { transform: translate(3px, 3px); box-shadow: none !important; }
+        `}</style>
+
+        {/* Card */}
+        <div
+          className="w-full max-w-xl rounded-3xl p-10 md:p-14 flex flex-col items-center text-center"
+          style={{
+            background: "#ffffff",
+            border: "3px solid rgb(48,47,45)",
+            boxShadow: "8px 8px 0 rgb(48,47,45)",
+          }}
+        >
+          {/* Logo */}
+          <div
+            className="landing-fade inline-flex items-center gap-2 px-5 py-2 rounded-xl mb-8"
+            style={{
+              background: "#166534",
+              border: "3px solid #14532d",
+              boxShadow: "4px 4px 0 rgb(48,47,45)",
+            }}
+          >
+            <span
+              className="text-2xl md:text-3xl font-black"
+              style={{ color: "#ffffff", letterSpacing: "-0.5px" }}
+            >
+             Cipher<span style={{ color: "#fde68a" }}>AI</span>
+            </span>
+          </div>
+
+          <h1
+            className="landing-fade-2 text-3xl md:text-4xl font-black leading-tight"
+            style={{ color: "#111827" }}
+          >
+            Create teaching resources{" "}
+            <span style={{ color: "#166534" }}>easily</span>.
+          </h1>
+
+          <p
+            className="landing-fade-3 mt-4 text-base md:text-lg font-bold"
+            style={{ color: "#6b7280" }}
+          >
+            Generate beautiful slide decks for any topic and grade level —
+            powered by AI, in seconds.
+          </p>
+
+          {/* Feature pills */}
+          <div className="landing-fade-3 mt-6 flex flex-wrap gap-2 justify-center">
+            {[
+              "📚 Curriculum-aligned",
+              "🖼 Auto images",
+              "📄 PDF export",
+              "✏️ Editable slides",
+            ].map((f) => (
+              <span
+                key={f}
+                className="text-xs font-black px-3 py-1.5 rounded-lg"
+                style={{
+                  background: "#f0fdf4",
+                  color: "#166534",
+                  border: "2px solid #bbf7d0",
+                }}
+              >
+                {f}
+              </span>
+            ))}
+          </div>
+
+          <button
+            onClick={enterApp}
+            className="landing-fade-4 landing-btn mt-10 rounded-2xl px-10 py-4 text-xl font-black transition-all"
+            style={{
+              background: "#166534",
+              color: "#ffffff",
+              border: "3px solid #14532d",
+              boxShadow: "5px 5px 0 rgb(48,47,45)",
+              cursor: "pointer",
+            }}
+          >
+            Generate a Slide Deck ✦
+          </button>
+
+          <p
+            className="landing-fade-4 mt-4 text-xs font-bold"
+            style={{ color: "#9ca3af" }}
+          >
+            No sign-up required
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-zinc-50">
+    <main className="min-h-screen" style={{ background: "#f4f6f9" }}>
       <style>{`
         @keyframes slideInRight {
           from { opacity: 0; transform: translateX(32px); }
@@ -381,25 +529,61 @@ export default function Home() {
           from { opacity: 0; transform: translateX(-32px); }
           to   { opacity: 1; transform: translateX(0); }
         }
+        .comic-input::placeholder { color: #6b7280; }
+        .comic-select option { background: #ffffff; color: #111827; }
+        .comic-btn:active { transform: translate(3px, 3px); box-shadow: none !important; }
+        .comic-nav-btn:active { transform: translate(2px, 2px); box-shadow: none !important; }
       `}</style>
-      <div className="max-w-6xl mx-auto p-6 md:p-10">
 
-        {/* Top bar */}
-        <div className="flex flex-col gap-3 md:gap-4">
+      <div className="max-w-6xl mx-auto p-5 md:p-8">
+        {/* ── Top bar ── */}
+        <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight">
-              Canva-style Lesson Slides ✨
-            </h1>
+            {/* Logo */}
+            <div
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-xl"
+              style={{
+                background: "#166534",
+                border: "3px solid #14532d",
+                boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+              }}
+            >
+              <span
+                className="text-2xl md:text-3xl font-black"
+                style={{ color: "#ffffff", letterSpacing: "-0.5px" }}
+              >
+               Cipher <span style={{ color: "#fde68a" }}>AI</span>
+              </span>
+            </div>
 
             {total ? (
-              <div className="text-sm text-zinc-600">{progressLabel}</div>
+              <div
+                className="text-sm font-black px-4 py-1.5 rounded-lg"
+                style={{
+                  background: "#ffffff",
+                  color: "#111827",
+                  border: "3px solid rgb(48, 47, 45)",
+                  boxShadow: "3px 3px 0 rgb(48, 47, 45)",
+                }}
+              >
+                {progressLabel}
+              </div>
             ) : null}
           </div>
 
-          {/* Input */}
-          <div className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
-
-            <label className="text-sm font-semibold text-zinc-700">
+          {/* ── Input panel ── */}
+          <div
+            className="rounded-2xl p-4 md:p-6"
+            style={{
+              background: "#ffffff",
+              border: "3px solid rgb(48, 47, 45)",
+              boxShadow: "6px 6px 0 rgb(48, 47, 45)",
+            }}
+          >
+            <label
+              className="text-xs font-black uppercase tracking-widest"
+              style={{ color: "#374151" }}
+            >
               Topic
             </label>
 
@@ -407,39 +591,86 @@ export default function Home() {
               <input
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="e.g., 🌋 Volcanoes / 🐍 Python basics"
-                className="w-full rounded-xl border px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-black/10"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && topic.trim() && !loading)
+                    generateLesson();
+                }}
+                placeholder="e.g., 🌋 Volcanoes / Regular vs Irregular Verbs "
+                className="comic-input w-full rounded-xl px-4 py-3 text-lg font-bold outline-none"
+                style={{
+                  background: "#f9fafb",
+                  border: "3px solid #d1d5db",
+                  color: "#111827",
+                  boxShadow: "inset 2px 2px 0 #e5e7eb",
+                }}
               />
 
               <button
                 onClick={generateLesson}
                 disabled={!topic.trim() || loading}
-                className="rounded-xl bg-black text-white px-6 py-3 text-lg font-semibold disabled:opacity-50"
+                className="comic-btn shrink-0 rounded-xl px-6 py-3 text-lg font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: "#166534",
+                  color: "#ffffff",
+                  border: "3px solid #14532d",
+                  boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                  cursor: "pointer",
+                }}
               >
-                {loading ? "Writing slides…" : imagesLoading ? "Loading images…" : stabilityIdx !== null ? "AI image…" : "Generate"}
+                {loading
+                  ? "Writing slides…"
+                  : imagesLoading
+                  ? "Loading images…"
+                  : stabilityIdx !== null
+                  ? "AI image…"
+                  : "Generate ✦"}
               </button>
             </div>
 
             <div className="mt-4 flex gap-3 flex-wrap">
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Grade</label>
+                <label
+                  className="text-xs font-black uppercase tracking-widest"
+                  style={{ color: "#374151" }}
+                >
+                  Grade
+                </label>
                 <select
                   value={gradeLevel}
                   onChange={(e) => setGradeLevel(Number(e.target.value))}
-                  className="rounded-lg border px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-black/10"
+                  className="comic-select rounded-lg px-3 py-2 text-sm font-bold outline-none"
+                  style={{
+                    background: "#ffffff",
+                    border: "3px solid #d1d5db",
+                    color: "#111827",
+                    boxShadow: "3px 3px 0 #9ca3af",
+                  }}
                 >
-                  {[1,2,3,4,5,6,7,8,9,10,11].map((g) => (
-                    <option key={g} value={g}>Grade {g}</option>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((g) => (
+                    <option key={g} value={g}>
+                      Grade {g}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Curriculum</label>
+                <label
+                  className="text-xs font-black uppercase tracking-widest"
+                  style={{ color: "#374151" }}
+                >
+                  Curriculum
+                </label>
                 <select
                   value={curriculum}
                   onChange={(e) => setCurriculum(e.target.value)}
-                  className="rounded-lg border px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-black/10"
+                  className="comic-select rounded-lg px-3 py-2 text-sm font-bold outline-none"
+                  style={{
+                    background: "#ffffff",
+                    border: "3px solid #d1d5db",
+                    color: "#111827",
+                    boxShadow: "3px 3px 0 #9ca3af",
+                  }}
                 >
                   {[
                     "Cambridge",
@@ -451,206 +682,363 @@ export default function Home() {
                     "Montessori",
                     "Australian (ACARA)",
                   ].map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            <div className="mt-3 text-xs text-zinc-500">
+            <div
+              className="mt-3 text-xs font-bold"
+              style={{ color: "#6b7280" }}
+            >
               Tip: Use ← → arrow keys to change slides.
             </div>
-
           </div>
         </div>
 
-        {/* Slide stage */}
+        {/* ── Slide stage ── */}
         <div className="mt-8">
           {!total ? (
-            <div className="rounded-3xl border bg-white shadow-sm p-10 text-center text-zinc-600">
-              <div className="text-2xl font-bold">No slides yet 🙂</div>
-              <div className="mt-2">
+            <div
+              className="rounded-2xl p-12 text-center"
+              style={{
+                background: "#ffffff",
+                border: "3px solid rgb(48, 47, 45)",
+                boxShadow: "6px 6px 0 rgb(48, 47, 45)",
+              }}
+            >
+              <div className="text-5xl mb-4">📚</div>
+              <div className="text-2xl font-black" style={{ color: "#111827" }}>
+                No slides yet
+              </div>
+              <div className="mt-2 font-bold" style={{ color: "#6b7280" }}>
                 Enter a topic and hit{" "}
-                <span className="font-semibold">Generate</span>.
+                <span className="font-black" style={{ color: "#166534" }}>
+                  Generate ✦
+                </span>
               </div>
             </div>
           ) : (
             <>
-              {/* Deck title + Download buttons */}
+              {/* Deck title + Download */}
               <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
                 {deck?.deckTitle ? (
-                  <h2 className="text-xl md:text-2xl font-extrabold text-zinc-900">
+                  <h2
+                    className="text-xl md:text-2xl font-black px-4 py-1.5 rounded-xl"
+                    style={{
+                      background: "#166534",
+                      color: "#ffffff",
+                      border: "3px solid #14532d",
+                      boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                    }}
+                  >
                     {deck.deckTitle}
                   </h2>
                 ) : (
                   <div />
                 )}
 
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => download("pdf")}
-                    disabled={downloading}
-                    className="rounded-xl bg-black text-white px-4 py-2 font-semibold disabled:opacity-60"
-                  >
-                    {downloading ? "Downloading…" : "Download"}
-                  </button>
-                </div>
+                <button
+                  onClick={() => download("pdf")}
+                  disabled={downloading}
+                  className="comic-btn rounded-xl px-4 py-2 font-black transition-all disabled:opacity-40"
+                  style={{
+                    background: "#ffffff",
+                    color: "#111827",
+                    border: "3px solid rgb(48, 47, 45)",
+                    boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                  }}
+                >
+                  {downloading ? "Downloading…" : "⬇ PDF"}
+                </button>
               </div>
 
               {/* Slide container */}
-              <div className="relative flex items-center gap-2">
+              <div className="relative flex items-center gap-3">
+                {/* Prev */}
                 <button
                   onClick={prev}
                   disabled={!canPrev}
-                  className="shrink-0 rounded-2xl bg-white px-3 py-3 shadow-sm border disabled:opacity-40"
+                  className="comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
+                  style={{
+                    background: "#166534",
+                    color: "#ffffff",
+                    border: "3px solid #14532d",
+                    boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                  }}
                 >
-                  ⬅️
+                  ←
                 </button>
-                <div className="flex-1 aspect-video rounded-2xl overflow-hidden border bg-white shadow-sm flex flex-col">
+
+                {/* Slide card */}
                 <div
-                  key={idx}
-                  className="flex flex-col flex-1 min-h-0"
-                  style={{ animation: `slideIn${slideDir === "right" ? "Right" : "Left"} 0.22s ease-out` }}
+                  className="flex-1 aspect-video rounded-2xl overflow-hidden flex flex-col"
+                  style={{
+                    background: "#ffffff",
+                    border: "3px solid rgb(48, 47, 45)",
+                    boxShadow: "8px 8px 0 #fbbf24",
+                  }}
                 >
-
-                  {/* Green header band */}
-                  <div className="bg-green-800 flex items-center shrink-0" style={{ height: "15%" }}>
-                    <div className="w-1.5 self-stretch bg-green-400 shrink-0" />
-                    <input
-                      key={idx}
-                      defaultValue={current?.title}
-                      onBlur={(e) => patchSlide(idx, { title: e.target.value || current?.title || "" })}
-                      className="flex-1 px-5 text-base md:text-2xl font-bold text-white leading-tight bg-transparent border-0 outline-none focus:bg-white/10 rounded min-w-0"
-                    />
-                    <span className="shrink-0 pr-4 text-green-200 text-xs md:text-sm font-semibold">
-                      {idx + 1}/{total}
-                    </span>
-                  </div>
-
-                  {/* Content row */}
-                  <div className="flex flex-1 min-h-0">
-
-                    {/* Bullets column */}
-                    <div className="flex-1 px-6 md:px-8 flex flex-col justify-center">
-                      <ul className="space-y-1.5 md:space-y-3">
-                        {(current?.bullets || []).map((b, i) => (
-                          <li key={`${idx}-${i}`} className="flex items-start gap-2 md:gap-3">
-                            <span className="mt-1.5 w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-600 shrink-0" />
-                            <input
-                              defaultValue={b}
-                              onBlur={(e) => {
-                                const newBullets = [...(current?.bullets || [])];
-                                const trimmed = e.target.value.trim();
-                                if (trimmed) {
-                                  newBullets[i] = trimmed;
-                                } else {
-                                  newBullets.splice(i, 1);
-                                }
-                                patchSlide(idx, { bullets: newBullets });
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") e.currentTarget.blur();
-                              }}
-                              className="text-xs md:text-lg text-zinc-900 leading-snug bg-transparent border-0 outline-none focus:bg-zinc-100 rounded px-1 flex-1 min-w-0"
-                            />
-                          </li>
-                        ))}
-                      </ul>
-                      <button
-                        onClick={() => patchSlide(idx, { bullets: [...(current?.bullets || []), "New point"] })}
-                        className="mt-2 self-start text-[10px] md:text-xs text-zinc-400 hover:text-green-700 font-medium"
+                  <div
+                    key={idx}
+                    className="flex flex-col flex-1 min-h-0"
+                    style={{
+                      animation: `slideIn${
+                        slideDir === "right" ? "Right" : "Left"
+                      } 0.22s ease-out`,
+                    }}
+                  >
+                    {/* Header band */}
+                    <div
+                      className="flex items-center shrink-0"
+                      style={{
+                        height: "15%",
+                        background: "#166534",
+                        borderBottom: "3px solid #14532d",
+                      }}
+                    >
+                      <div
+                        className="w-2 self-stretch shrink-0"
+                        style={{ background: "rgb(48, 47, 45)" }}
+                      />
+                      <input
+                        key={idx}
+                        defaultValue={current?.title}
+                        onBlur={(e) =>
+                          patchSlide(idx, {
+                            title: e.target.value || current?.title || "",
+                          })
+                        }
+                        className="flex-1 px-4 text-base md:text-2xl font-black leading-tight bg-transparent border-0 outline-none min-w-0"
+                        style={{ color: "#ffffff" }}
+                      />
+                      <span
+                        className="shrink-0 pr-4 text-xs md:text-sm font-black px-2 py-0.5 rounded-lg mr-2"
+                        style={{
+                          background: "rgb(48, 47, 45)",
+                          color: "#ffffff",
+                        }}
                       >
-                        + Add bullet
-                      </button>
+                        {idx + 1}/{total}
+                      </span>
                     </div>
 
-                    {/* Image column */}
-                    <div className="w-[42%] p-2 md:p-3 flex flex-col bg-zinc-50 border-l border-zinc-100">
-                      <div className="flex-1 flex items-center justify-center min-h-0">
-                        {displayImage ? (
-                          <div
-                            className="relative w-full h-full group cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-500/30"
-                            tabIndex={0}
-                            onPaste={(e) => handleImagePaste(e, idx)}
-                            title="Click here and paste to replace image (Ctrl+V)"
-                          >
-                            <img
-                              src={displayImage}
-                              alt={current?.imageAlt || ""}
-                              className="w-full h-full object-contain rounded-xl"
-                            />
-                            <div className="absolute inset-0 rounded-xl bg-black/0 group-hover:bg-black/10 group-focus:bg-black/10 transition-colors flex items-center justify-center">
-                              <span className="opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity text-white text-xs font-semibold bg-black/50 px-2 py-1 rounded-lg">
-                                Paste to replace (Ctrl+V)
+                    {/* Content row */}
+                    <div className="flex flex-1 min-h-0">
+                      {/* Bullets */}
+                      <div
+                        className="flex-1 px-5 md:px-7 flex flex-col justify-center"
+                        style={{ background: "#ffffff" }}
+                      >
+                        <ul className="space-y-1.5 md:space-y-3">
+                          {(current?.bullets || []).map((b, i) => (
+                            <li
+                              key={`${idx}-${i}`}
+                              className="flex items-start gap-2 md:gap-3"
+                            >
+                              <span
+                                className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
+                                style={{ color: "#166534" }}
+                              >
+                                ▸
                               </span>
-                            </div>
-                          </div>
-                        ) : current?.youtubeVideoId ? (
-                          <iframe
-                            key={current.youtubeVideoId}
-                            src={`https://www.youtube.com/embed/${current.youtubeVideoId}?rel=0`}
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            className="w-full h-full rounded-xl border-0"
-                            title={current.title}
-                          />
-                        ) : imagesLoading || stabilityIdx === idx ? (
-                          <div className="w-full h-full min-h-[80px] rounded-xl bg-zinc-200 animate-pulse flex items-center justify-center">
-                            <span className="text-[10px] md:text-xs text-zinc-400 font-medium">
-                              {stabilityIdx === idx ? "Generating AI image…" : "Loading image…"}
-                            </span>
-                          </div>
-                        ) : (
-                          <div
-                            className="w-full h-full min-h-[80px] rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-100 flex flex-col items-center justify-center gap-1 cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-500/20 hover:border-zinc-300 hover:bg-zinc-50 transition-colors"
-                            tabIndex={0}
-                            onPaste={(e) => handleImagePaste(e, idx)}
-                            title="Click here and paste an image (Ctrl+V)"
-                          >
-                            <span className="text-2xl md:text-3xl select-none">💡</span>
-                            <span className="text-[10px] md:text-xs font-medium text-zinc-400">Paste an image here if you want</span>
-                          </div>
-                        )}
+                              <input
+                                defaultValue={b}
+                                onBlur={(e) => {
+                                  const newBullets = [
+                                    ...(current?.bullets || []),
+                                  ];
+                                  const trimmed = e.target.value.trim();
+                                  if (trimmed) {
+                                    newBullets[i] = trimmed;
+                                  } else {
+                                    newBullets.splice(i, 1);
+                                  }
+                                  patchSlide(idx, { bullets: newBullets });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") e.currentTarget.blur();
+                                }}
+                                className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold"
+                                style={{ color: "#111827" }}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                        <button
+                          onClick={() =>
+                            patchSlide(idx, {
+                              bullets: [
+                                ...(current?.bullets || []),
+                                "New point",
+                              ],
+                            })
+                          }
+                          className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
+                          style={{
+                            color: "#166534",
+                            border: "2px solid #166534",
+                          }}
+                        >
+                          + Add bullet
+                        </button>
                       </div>
 
-                      {pastedEntry ? (
-                        <input
-                          type="text"
-                          value={pastedEntry.credit}
-                          onChange={(e) =>
-                            setPastedImages((prev) => ({
-                              ...prev,
-                              [idx]: { ...prev[idx], credit: e.target.value },
-                            }))
-                          }
-                          className="mt-1 shrink-0 text-[9px] text-zinc-500 text-right w-full rounded border border-zinc-200 bg-white px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-green-500/20"
-                        />
-                      ) : imageCredit ? (
-                        <div className="mt-1 shrink-0 text-[9px] text-zinc-400 text-right leading-tight px-1 truncate">
-                          {imageCredit}
+                      {/* Image column */}
+                      <div
+                        className="w-[42%] p-2 md:p-3 flex flex-col"
+                        style={{
+                          background: "#f8fafc",
+                          borderLeft: "3px solid #e2e8f0",
+                        }}
+                      >
+                        <div className="flex-1 flex items-center justify-center min-h-0">
+                          {displayImage ? (
+                            <div
+                              className="relative w-full h-full group cursor-pointer focus:outline-none"
+                              tabIndex={0}
+                              onPaste={(e) => handleImagePaste(e, idx)}
+                              title="Click here and paste to replace image (Ctrl+V)"
+                            >
+                              <img
+                                src={displayImage}
+                                alt={current?.imageAlt || ""}
+                                className="w-full h-full object-contain rounded-lg"
+                                style={{ border: "2px solid #e2e8f0" }}
+                              />
+                              <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
+                                <span
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-black px-2 py-1 rounded-lg"
+                                  style={{
+                                    color: "#ffffff",
+                                    background: "#166534",
+                                    border: "2px solid #e2e8f0",
+                                  }}
+                                >
+                                  Paste to replace (Ctrl+V)
+                                </span>
+                              </div>
+                            </div>
+                          ) : current?.youtubeVideoId ? (
+                            <iframe
+                              key={current.youtubeVideoId}
+                              src={`https://www.youtube.com/embed/${current.youtubeVideoId}?rel=0`}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                              className="w-full h-full border-0 rounded-lg"
+                              style={{ border: "2px solid #e2e8f0" }}
+                              title={current.title}
+                            />
+                          ) : imagesLoading || stabilityIdx === idx ? (
+                            <div
+                              className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
+                              style={{
+                                background: "#f1f5f9",
+                                border: "2px dashed #cbd5e1",
+                              }}
+                            >
+                              <span
+                                className="text-[10px] md:text-xs font-black"
+                                style={{ color: "#94a3b8" }}
+                              >
+                                {stabilityIdx === idx
+                                  ? "Generating AI image…"
+                                  : "Loading image…"}
+                              </span>
+                            </div>
+                          ) : (
+                            <div
+                              className="w-full h-full min-h-[80px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer focus:outline-none"
+                              style={{
+                                borderColor: "#d1d5db",
+                                background: "#f9fafb",
+                              }}
+                              tabIndex={0}
+                              onPaste={(e) => handleImagePaste(e, idx)}
+                              title="Click here and paste an image (Ctrl+V)"
+                            >
+                              <span className="text-2xl md:text-3xl select-none">
+                                💡
+                              </span>
+                              <span
+                                className="text-[10px] md:text-xs font-black"
+                                style={{ color: "#9ca3af" }}
+                              >
+                                Paste image here
+                              </span>
+                            </div>
+                          )}
                         </div>
-                      ) : null}
+
+                        {pastedEntry ? (
+                          <input
+                            type="text"
+                            value={pastedEntry.credit}
+                            onChange={(e) =>
+                              setPastedImages((prev) => ({
+                                ...prev,
+                                [idx]: { ...prev[idx], credit: e.target.value },
+                              }))
+                            }
+                            className="mt-1 shrink-0 text-[9px] text-right w-full rounded px-1.5 py-0.5 focus:outline-none font-bold"
+                            style={{
+                              background: "#ffffff",
+                              border: "2px solid #e2e8f0",
+                              color: "#166534",
+                            }}
+                          />
+                        ) : imageCredit ? (
+                          <div
+                            className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold"
+                            style={{ color: "#166534" }}
+                          >
+                            {imageCredit}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
 
+                    {/* Footer */}
+                    <div
+                      className="shrink-0 flex items-center justify-between px-5 py-1.5"
+                      style={{
+                        borderTop: "3px solid #14532d",
+                        background: "#166534",
+                      }}
+                    >
+                      <span
+                        className="text-[10px] font-black tracking-widest"
+                        style={{ color: "#fde68a" }}
+                      >
+                       Cipher
+                      </span>
+                      <span
+                        className="hidden md:inline text-[10px] font-bold"
+                        style={{ color: "#bbf7d0" }}
+                      >
+                        Use ← → to move
+                      </span>
+                    </div>
                   </div>
-
-                  {/* Footer */}
-                  <div className="shrink-0 flex items-center justify-between px-5 py-1.5 border-t border-zinc-100">
-                    <span className="text-[10px] text-zinc-400">Lesson Maker</span>
-                    <span className="hidden md:inline text-[10px] text-zinc-300">Use ← → to move</span>
-                  </div>
-
-                </div>{/* end animated wrapper */}
                 </div>
 
+                {/* Next */}
                 <button
                   onClick={next}
                   disabled={!canNext}
-                  className="shrink-0 rounded-2xl bg-white px-3 py-3 shadow-sm border disabled:opacity-40"
+                  className="comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
+                  style={{
+                    background: "#166534",
+                    color: "#ffffff",
+                    border: "3px solid #14532d",
+                    boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                  }}
                 >
-                  ➡️
+                  →
                 </button>
-
               </div>
             </>
           )}

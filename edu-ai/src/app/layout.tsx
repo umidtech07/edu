@@ -9,7 +9,7 @@ const patrickHand = Patrick_Hand({
 });
 
 export const metadata: Metadata = {
-  title: "Lesson Maker",
+  title: "Cipher",
   description: "AI-powered lesson slide generator",
 };
 
@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${patrickHand.variable} antialiased`}
-        style={{ fontFamily: "var(--font-patrick-hand), cursive" }}
+        style={{ fontFamily: "var(--font-patrick-hand), cursive", background: "#f4f6f9" }}
       >
         {children}
       </body>
