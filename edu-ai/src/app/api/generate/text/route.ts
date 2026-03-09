@@ -54,7 +54,6 @@ Slide mix (vary types across the deck):
 - explanation, example, interesting fact, reflection question, true/false quiz (no answer), recap
 
 Content rules:
-- Use Uzbekistan-relevant examples, names, and local context where natural (cities, food, history, geography, culture)
 - Bullets: simple language, max 12 words each
 ${isPrimary
   ? `- Very simple and child-friendly
