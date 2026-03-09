@@ -1,5 +1,6 @@
 type PexelsPhoto = {
   alt: string;
+  photographer: string;
   src: {
     original: string;
     large2x?: string;

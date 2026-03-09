@@ -8,9 +8,12 @@ type Slide = {
   bullets: string[];
   image?: string | null;   // URL
   imageAlt?: string;
+  imageCredit?: string | null;
+  youtubeVideoId?: string | null;
 };
 
 async function fetchImageAsDataUri(url: string): Promise<string> {
+  if (url.startsWith("data:")) return url;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Failed to fetch image: ${r.status}`);
   const contentType = r.headers.get("content-type") || "image/jpeg";
@@ -84,6 +87,27 @@ export async function POST(req: Request) {
         } catch {
           // skip image if it fails
         }
+        if (s.imageCredit) {
+          slide.addText(s.imageCredit, {
+            x: 7.4, y: 5.85, w: 5.5, h: 0.3,
+            fontFace: "Segoe UI Emoji",
+            fontSize: 8,
+            color: "9CA3AF",
+            align: "right",
+          });
+        }
+      } else if (s.youtubeVideoId) {
+        const videoUrl = `https://www.youtube.com/watch?v=${s.youtubeVideoId}`;
+        const shortUrl = `youtu.be/${s.youtubeVideoId}`;
+        slide.addText([
+          { text: "▶  Watch on YouTube\n", options: { bold: true, color: "CC1400", fontSize: 20 } },
+          { text: shortUrl, options: { hyperlink: { url: videoUrl }, color: "1D4ED8", fontSize: 16 } },
+        ], {
+          x: 7.4, y: 1.5, w: 5.5, h: 4.3,
+          fontFace: "Segoe UI Emoji",
+          align: "center",
+          valign: "middle",
+        });
       }
     }
 
@@ -92,7 +116,7 @@ export async function POST(req: Request) {
     const filename =
       (deckTitle || "lesson").replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\s+/g, "_") + ".pptx";
 
-    return new NextResponse(buffer, {
+    return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.presentationml.presentation",
