@@ -43,7 +43,8 @@ export async function POST(req: Request) {
       primaryMode || (!Number.isNaN(numericGrade) && numericGrade <= 4);
     const effectiveSlideCount = isPrimary ? 5 : slideCount;
 
-    const prompt = `Create a ${effectiveSlideCount}-slide lesson deck for Uzbekistan students.
+    const prompt = isPrimary
+      ? `Create a ${effectiveSlideCount}-slide lesson deck for young students (grades 1–4).
 
 Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
 
@@ -54,14 +55,27 @@ Slide mix (vary types across the deck):
 - explanation, example, interesting fact, reflection question, true/false quiz (no answer), recap
 
 Content rules:
-- Bullets: simple language, max 12 words each
-${isPrimary
-  ? `- Very simple and child-friendly
-- 2–3 visual slides; rest have imageQuery: null`
-  : `- 2–3 visual slides; quiz/reflection slides get imageQuery: null`}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`;
+- Very simple and child-friendly language
+- Bullets: max 12 words each, 3–5 bullets per slide
+- 2–3 visual slides; rest have imageQuery: null${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`
+      : `Create a ${effectiveSlideCount}-slide lesson deck for upper-grade students (grades 5–8).
+
+Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
+
+Return ONLY valid JSON:
+{"deckTitle":"string","slides":[{"title":"string","content":"string","imageQuery":"string|null"}]}
+
+Slide mix (vary types across the deck):
+- explanation, example, interesting fact, reflection question, true/false quiz (no answer), recap
+
+Content rules:
+- "content" is a single paragraph of 2–3 sentences for grades 5-7 and 4-5 sentences for above explaining the slide topic clearly
+- Use subject-specific vocabulary appropriate for the grade level
+- Include concrete examples, data, or evidence where relevant
+- 2–3 visual slides; quiz/reflection slides get imageQuery: null${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-4.1-nano",
       temperature: 0.6,
       messages: [
         { role: "system", content: "Return strict JSON only." },
@@ -79,12 +93,19 @@ ${isPrimary
       );
     }
 
+    const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
+      .slice(0, effectiveSlideCount)
+      .map((s: any) => ({
+        title: s.title ?? "",
+        ...(isPrimary
+          ? { bullets: Array.isArray(s.bullets) ? s.bullets : [] }
+          : { content: s.content ?? "" }),
+        imageQuery: s.imageQuery ?? null,
+      }));
+
     return NextResponse.json({
       deckTitle: parsed.deckTitle ?? topic,
-      slides: (Array.isArray(parsed.slides) ? parsed.slides : []).slice(
-        0,
-        effectiveSlideCount
-      ),
+      slides,
       isPrimary,
     });
   } catch (err: any) {

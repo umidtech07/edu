@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 type Slide = {
   title: string;
   bullets: string[];
+  content?: string | null;
   image?: string | null;
   imageCredit?: string | null;
   youtubeVideoId?: string | null;
@@ -148,46 +149,63 @@ export async function POST(req: Request) {
       const lineH = 26;
       const bulletIndent = 28;
 
-      // Calculate total bullet block height for vertical centering
-      let totalBulletsH = 0;
-      for (const b of s.bullets || []) {
-        const maxChars = hasVisual ? 44 : 90;
-        const lines = wrapText(sanitize(b), maxChars);
-        totalBulletsH += lines.length * lineH + 10;
-      }
-      if (totalBulletsH > 0) totalBulletsH -= 10; // remove trailing gap after last bullet
-
-      // Center the bullet block vertically in the content area
-      let cursorY = contentBottom + Math.floor((contentH + totalBulletsH) / 2);
-
-      for (const b of s.bullets || []) {
-        const maxChars = hasVisual ? 44 : 90;
-        const lines = wrapText(sanitize(b), maxChars);
-
-        // Bullet dot
-        page.drawEllipse({
-          x: textX + 10,
-          y: cursorY + bulletSize * 0.35,
-          xScale: 4,
-          yScale: 4,
-          color: BLUE,
-        });
-
-        // Text lines
-        let lineY = cursorY;
+      if (s.content) {
+        // Upper grades: render as wrapped paragraph
+        const maxChars = hasVisual ? 66 : 130;
+        const lines = wrapText(sanitize(s.content), maxChars);
+        const totalH = lines.length * lineH;
+        let cursorY = contentBottom + Math.floor((contentH + totalH) / 2);
         for (const line of lines) {
+          if (cursorY < contentBottom + 10) break;
           page.drawText(line, {
-            x: textX + bulletIndent,
-            y: lineY,
+            x: textX,
+            y: cursorY,
             size: bulletSize,
             font,
             color: DARK,
+            maxWidth: textW,
           });
-          lineY -= lineH;
+          cursorY -= lineH;
         }
+      } else {
+        // Primary grades: render as bullet list
+        let totalBulletsH = 0;
+        for (const b of s.bullets || []) {
+          const maxChars = hasVisual ? 44 : 90;
+          const lines = wrapText(sanitize(b), maxChars);
+          totalBulletsH += lines.length * lineH + 10;
+        }
+        if (totalBulletsH > 0) totalBulletsH -= 10;
 
-        cursorY = lineY - 10;
-        if (cursorY < contentBottom + 10) break;
+        let cursorY = contentBottom + Math.floor((contentH + totalBulletsH) / 2);
+
+        for (const b of s.bullets || []) {
+          const maxChars = hasVisual ? 44 : 90;
+          const lines = wrapText(sanitize(b), maxChars);
+
+          page.drawEllipse({
+            x: textX + 10,
+            y: cursorY + bulletSize * 0.35,
+            xScale: 4,
+            yScale: 4,
+            color: BLUE,
+          });
+
+          let lineY = cursorY;
+          for (const line of lines) {
+            page.drawText(line, {
+              x: textX + bulletIndent,
+              y: lineY,
+              size: bulletSize,
+              font,
+              color: DARK,
+            });
+            lineY -= lineH;
+          }
+
+          cursorY = lineY - 10;
+          if (cursorY < contentBottom + 10) break;
+        }
       }
 
       // ── Image column ──────────────────────────────────────────────

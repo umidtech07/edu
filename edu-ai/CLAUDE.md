@@ -18,7 +18,9 @@ No test suite exists yet.
 OPENAI_API_KEY
 PEXELS_API_KEY
 STABILITY_API_KEY
-YOUTUBE_API_KEY   # optional — YouTube Data API v3; enables video embeds on no-image slides
+UNSPLASH_ACCESS_KEY   # optional — Unsplash image search (hotlinking required, attribution shown)
+PIXABAY_API_KEY       # optional — Pixabay image search (images proxied server-side as base64)
+YOUTUBE_API_KEY       # optional — YouTube Data API v3; enables video embeds on no-image slides
 ```
 
 Create a `.env.local` file at the project root with these keys before running.

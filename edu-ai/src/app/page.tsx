@@ -5,10 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 type Slide = {
   title: string;
   bullets: string[];
+  content?: string | null;
   image?: string | null;
   imageAlt?: string;
-  imageSource?: "pexels" | "stability" | null;
+  imageSource?: "pexels" | "unsplash" | "pixabay" | "stability" | null;
   imageCredit?: string | null;
+  /** Clickable URL for attribution (Unsplash requires a link; null for other sources) */
+  imageCreditUrl?: string | null;
   youtubeVideoId?: string | null;
 };
 
@@ -58,6 +61,7 @@ export default function Home() {
   const pastedEntry = pastedImages[idx];
   const displayImage = pastedEntry?.dataUrl ?? current?.image ?? null;
   const imageCredit = pastedEntry?.credit ?? current?.imageCredit ?? null;
+  const imageCreditUrl = pastedEntry ? null : current?.imageCreditUrl ?? null;
 
   const canPrev = idx > 0;
   const canNext = idx < total - 1;
@@ -102,6 +106,7 @@ export default function Home() {
             imageAlt: first.imageAlt,
             imageSource: first.imageSource,
             imageCredit: first.imageCredit,
+            imageCreditUrl: first.imageCreditUrl,
           };
         }
       }
@@ -123,7 +128,7 @@ export default function Home() {
       if (sources.length > 0 && targets.length > 0) {
         const kws = (slide: Slide) =>
           new Set(
-            [slide.title, ...(slide.bullets ?? [])]
+            [slide.title, ...(slide.bullets ?? []), slide.content ?? ""]
               .join(" ")
               .toLowerCase()
               .split(/\W+/)
@@ -146,6 +151,7 @@ export default function Home() {
             imageAlt: best.s.imageAlt ?? "",
             imageSource: best.s.imageSource,
             imageCredit: best.s.imageCredit,
+            imageCreditUrl: best.s.imageCreditUrl,
           };
         });
       }
@@ -193,10 +199,12 @@ export default function Home() {
       const initSlides: Slide[] = rawSlides.map((s: any) => ({
         title: s.title ?? "",
         bullets: s.bullets ?? [],
+        content: s.content ?? null,
         image: null,
         imageAlt: "",
         imageSource: null,
         imageCredit: null,
+        imageCreditUrl: null,
         youtubeVideoId: null,
       }));
 
@@ -210,6 +218,7 @@ export default function Home() {
         origIndex: number;
         title: string;
         bullets: string[];
+        content?: string | null;
         imageQuery: string;
       }> = rawSlides
         .map((s: any, i: number) => ({ ...s, origIndex: i }))
@@ -221,15 +230,6 @@ export default function Home() {
       // Primary mode: max 1 Pexels photo (try slide 0 first)
       const pexelTargets = isPrimary ? visualSlides.slice(0, 1) : visualSlides;
 
-      // Start YouTube in parallel with images
-      const youtubePromise = fetch("/api/generate/youtube", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic }),
-      })
-        .then((r) => (r.ok ? r.json() : { videoId: null }))
-        .catch(() => ({ videoId: null }));
-
       // Pexels: all in parallel, stream each result as it arrives
       const pexelResults = await Promise.all(
         pexelTargets.map(async (slide) => {
@@ -240,7 +240,11 @@ export default function Home() {
               body: JSON.stringify({
                 imageQuery: slide.imageQuery,
                 title: slide.title,
-                bullets: slide.bullets,
+                bullets: slide.bullets?.length
+                  ? slide.bullets
+                  : slide.content
+                  ? slide.content.split(/[.!?]+/).filter(Boolean)
+                  : [],
                 // Slide 0 accepts any Pexels photo (score ≥ 0) to avoid Stability landing on the main slide
                 ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
@@ -309,24 +313,6 @@ export default function Home() {
           });
       }
 
-      // ── Step 6: YouTube — place in first imageless slide after 0, skipping stability slot ──
-      const { videoId } = await youtubePromise;
-      if (videoId) {
-        setDeck((prev) => {
-          if (!prev?.slides) return prev;
-          const slides = [...prev.slides];
-          const youtubeTarget = slides.findIndex(
-            (s, i) => i > 0 && !s.image && i !== stabilityTargetIdx
-          );
-          if (youtubeTarget !== -1) {
-            slides[youtubeTarget] = {
-              ...slides[youtubeTarget],
-              youtubeVideoId: videoId,
-            };
-          }
-          return { ...prev, slides };
-        });
-      }
     } finally {
       setLoading(false);
       setImagesLoading(false);
@@ -828,63 +814,81 @@ export default function Home() {
 
                     {/* Content row */}
                     <div className="flex flex-1 min-h-0">
-                      {/* Bullets */}
+                      {/* Text content */}
                       <div
                         className="flex-1 px-5 md:px-7 flex flex-col justify-center"
                         style={{ background: "#ffffff" }}
                       >
-                        <ul className="space-y-1.5 md:space-y-3">
-                          {(current?.bullets || []).map((b, i) => (
-                            <li
-                              key={`${idx}-${i}`}
-                              className="flex items-start gap-2 md:gap-3"
-                            >
-                              <span
-                                className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
-                                style={{ color: "#166534" }}
-                              >
-                                ▸
-                              </span>
-                              <input
-                                defaultValue={b}
-                                onBlur={(e) => {
-                                  const newBullets = [
+                        {current?.content != null ? (
+                          /* Upper grades: editable paragraph */
+                          <textarea
+                            key={`content-${idx}`}
+                            defaultValue={current.content}
+                            onBlur={(e) => {
+                              const trimmed = e.target.value.trim();
+                              if (trimmed) patchSlide(idx, { content: trimmed });
+                            }}
+                            className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                            style={{ color: "#111827", minHeight: "8rem" }}
+                            rows={6}
+                          />
+                        ) : (
+                          /* Primary grades: bullet list */
+                          <>
+                            <ul className="space-y-1.5 md:space-y-3">
+                              {(current?.bullets || []).map((b, i) => (
+                                <li
+                                  key={`${idx}-${i}`}
+                                  className="flex items-start gap-2 md:gap-3"
+                                >
+                                  <span
+                                    className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
+                                    style={{ color: "#166534" }}
+                                  >
+                                    ▸
+                                  </span>
+                                  <input
+                                    defaultValue={b}
+                                    onBlur={(e) => {
+                                      const newBullets = [
+                                        ...(current?.bullets || []),
+                                      ];
+                                      const trimmed = e.target.value.trim();
+                                      if (trimmed) {
+                                        newBullets[i] = trimmed;
+                                      } else {
+                                        newBullets.splice(i, 1);
+                                      }
+                                      patchSlide(idx, { bullets: newBullets });
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") e.currentTarget.blur();
+                                    }}
+                                    className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold"
+                                    style={{ color: "#111827" }}
+                                  />
+                                </li>
+                              ))}
+                            </ul>
+                            <button
+                              onClick={() =>
+                                patchSlide(idx, {
+                                  bullets: [
                                     ...(current?.bullets || []),
-                                  ];
-                                  const trimmed = e.target.value.trim();
-                                  if (trimmed) {
-                                    newBullets[i] = trimmed;
-                                  } else {
-                                    newBullets.splice(i, 1);
-                                  }
-                                  patchSlide(idx, { bullets: newBullets });
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") e.currentTarget.blur();
-                                }}
-                                className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold"
-                                style={{ color: "#111827" }}
-                              />
-                            </li>
-                          ))}
-                        </ul>
-                        <button
-                          onClick={() =>
-                            patchSlide(idx, {
-                              bullets: [
-                                ...(current?.bullets || []),
-                                "New point",
-                              ],
-                            })
-                          }
-                          className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
-                          style={{
-                            color: "#166534",
-                            border: "2px solid #166534",
-                          }}
-                        >
-                          + Add bullet
-                        </button>
+                                    "New point",
+                                  ],
+                                })
+                              }
+                              className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
+                              style={{
+                                color: "#166534",
+                                border: "2px solid #166534",
+                              }}
+                            >
+                              + Add bullet
+                            </button>
+                          </>
+                        )}
                       </div>
 
                       {/* Image column */}
@@ -922,16 +926,6 @@ export default function Home() {
                                 </span>
                               </div>
                             </div>
-                          ) : current?.youtubeVideoId ? (
-                            <iframe
-                              key={current.youtubeVideoId}
-                              src={`https://www.youtube.com/embed/${current.youtubeVideoId}?rel=0`}
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                              allowFullScreen
-                              className="w-full h-full border-0 rounded-lg"
-                              style={{ border: "2px solid #e2e8f0" }}
-                              title={current.title}
-                            />
                           ) : imagesLoading || stabilityIdx === idx ? (
                             <div
                               className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
@@ -991,12 +985,24 @@ export default function Home() {
                             }}
                           />
                         ) : imageCredit ? (
-                          <div
-                            className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold"
-                            style={{ color: "#166534" }}
-                          >
-                            {imageCredit}
-                          </div>
+                          imageCreditUrl ? (
+                            <a
+                              href={imageCreditUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold block"
+                              style={{ color: "#166534" }}
+                            >
+                              {imageCredit}
+                            </a>
+                          ) : (
+                            <div
+                              className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold"
+                              style={{ color: "#166534" }}
+                            >
+                              {imageCredit}
+                            </div>
+                          )
                         ) : null}
                       </div>
                     </div>

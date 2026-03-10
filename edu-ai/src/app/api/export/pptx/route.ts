@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 type Slide = {
   title: string;
   bullets: string[];
+  content?: string | null;
   image?: string | null;   // URL
   imageAlt?: string;
   imageCredit?: string | null;
@@ -60,21 +61,34 @@ export async function POST(req: Request) {
         color: "111827",
       });
 
-      // Bullets (left)
-      slide.addText(
-        (s.bullets || []).map((b) => ({
-          text: b,
-          options: { bullet: true }
-        })),
-        {
+      // Text content (left): paragraph for upper grades, bullets for primary
+      if (s.content) {
+        slide.addText(s.content, {
           x: 0.9,
           y: 1.5,
           w: 6.2,
           h: 5.5,
           fontFace: "Segoe UI Emoji",
-          fontSize: 20
-        }
-      );
+          fontSize: 18,
+          wrap: true,
+          valign: "middle",
+        });
+      } else {
+        slide.addText(
+          (s.bullets || []).map((b) => ({
+            text: b,
+            options: { bullet: true }
+          })),
+          {
+            x: 0.9,
+            y: 1.5,
+            w: 6.2,
+            h: 5.5,
+            fontFace: "Segoe UI Emoji",
+            fontSize: 20
+          }
+        );
+      }
 
       // Image (right)
       if (s.image) {
