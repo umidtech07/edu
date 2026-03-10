@@ -12,6 +12,21 @@ export type PhotoCandidate = {
   source: "pexels" | "unsplash" | "pixabay";
 };
 
+// Terms that indicate body/adult/fashion content — inappropriate for an
+// educational kids app. Candidates whose alt text or tags contain any of
+// these words are silently dropped before scoring.
+const BLOCKED_TERMS = [
+  "bikini", "underwear", "lingerie", "swimwear", "swimsuit", "bra", "panty",
+  "panties", "nude", "naked", "topless", "bodywear", "shapewear", "thong",
+  "corset", "bralette", "leotard", "bodysuit", "plus size model",
+  "body positive", "skin", "intimate", "sexy", "sensual",
+];
+
+function isBlockedCandidate(candidate: PhotoCandidate): boolean {
+  const haystack = `${candidate.alt} ${candidate.tags ?? ""}`.toLowerCase();
+  return BLOCKED_TERMS.some((term) => haystack.includes(term));
+}
+
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
@@ -56,6 +71,7 @@ export function chooseBestPhoto(
   let bestScore = -1;
 
   for (const candidate of candidates) {
+    if (isBlockedCandidate(candidate)) continue;
     const score = scoreCandidate(candidate, keywords);
     if (score > bestScore) {
       best = candidate;

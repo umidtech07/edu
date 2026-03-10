@@ -154,7 +154,10 @@ export async function POST(req: Request) {
         const maxChars = hasVisual ? 66 : 130;
         const lines = wrapText(sanitize(s.content), maxChars);
         const totalH = lines.length * lineH;
-        let cursorY = contentBottom + Math.floor((contentH + totalH) / 2);
+        let cursorY = Math.min(
+          contentTop - bulletSize,
+          contentBottom + Math.floor((contentH + totalH) / 2)
+        );
         for (const line of lines) {
           if (cursorY < contentBottom + 10) break;
           page.drawText(line, {
@@ -177,7 +180,10 @@ export async function POST(req: Request) {
         }
         if (totalBulletsH > 0) totalBulletsH -= 10;
 
-        let cursorY = contentBottom + Math.floor((contentH + totalBulletsH) / 2);
+        let cursorY = Math.min(
+          contentTop - bulletSize,
+          contentBottom + Math.floor((contentH + totalBulletsH) / 2)
+        );
 
         for (const b of s.bullets || []) {
           const maxChars = hasVisual ? 44 : 90;
