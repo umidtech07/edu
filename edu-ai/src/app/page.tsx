@@ -816,25 +816,26 @@ export default function Home() {
                     <div className="flex flex-1 min-h-0">
                       {/* Text content */}
                       <div
-                        className="flex-1 px-5 md:px-7 flex flex-col justify-center"
+                        className="flex-1 px-5 md:px-7 py-4 flex flex-col overflow-hidden items-center"
                         style={{ background: "#ffffff" }}
                       >
                         {current?.content != null ? (
                           /* Upper grades: editable paragraph */
-                          <textarea
-                            key={`content-${idx}`}
-                            defaultValue={current.content}
-                            onBlur={(e) => {
-                              const trimmed = e.target.value.trim();
-                              if (trimmed) patchSlide(idx, { content: trimmed });
-                            }}
-                            className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
-                            style={{ color: "#111827", minHeight: "8rem" }}
-                            rows={6}
-                          />
+                          <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
+                            <textarea
+                              key={`content-${idx}`}
+                              defaultValue={current.content}
+                              onBlur={(e) => {
+                                const trimmed = e.target.value.trim();
+                                if (trimmed) patchSlide(idx, { content: trimmed });
+                              }}
+                              className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                              style={{ color: "#111827", fieldSizing: "content" as never }}
+                            />
+                          </div>
                         ) : (
                           /* Primary grades: bullet list */
-                          <>
+                          <div className="flex flex-col justify-center flex-1 overflow-y-auto">
                             <ul className="space-y-1.5 md:space-y-3">
                               {(current?.bullets || []).map((b, i) => (
                                 <li
@@ -847,7 +848,7 @@ export default function Home() {
                                   >
                                     ▸
                                   </span>
-                                  <input
+                                  <textarea
                                     defaultValue={b}
                                     onBlur={(e) => {
                                       const newBullets = [
@@ -864,8 +865,9 @@ export default function Home() {
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter") e.currentTarget.blur();
                                     }}
-                                    className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold"
-                                    style={{ color: "#111827" }}
+                                    rows={1}
+                                    className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
+                                    style={{ color: "#111827", fieldSizing: "content" as never }}
                                   />
                                 </li>
                               ))}
@@ -887,7 +889,7 @@ export default function Home() {
                             >
                               + Add bullet
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
 
@@ -1016,11 +1018,12 @@ export default function Home() {
                       }}
                     >
                       <span
-                        className="text-[10px] font-black tracking-widest"
-                        style={{ color: "#fde68a" }}
+                        className="text-[10px] font-bold italic"
+                        style={{ color: "#bbf7d0", opacity: 0.75 }}
                       >
-                       Cipher
+                        AI can make mistakes. 
                       </span>
+                      
                       <span
                         className="hidden md:inline text-[10px] font-bold"
                         style={{ color: "#bbf7d0" }}
@@ -1050,6 +1053,25 @@ export default function Home() {
           )}
         </div>
       </div>
+      <a
+        href="https://t.me/umidtech"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Contact"
+        className="fixed bottom-4 right-4 flex items-center justify-center rounded-full transition-transform hover:scale-110"
+        style={{
+          width: 44,
+          height: 44,
+          background: "#166534",
+          border: "3px solid #14532d",
+          boxShadow: "3px 3px 0 rgb(48, 47, 45)",
+        }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+          <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+        </svg>
+      </a>
     </main>
   );
 }
