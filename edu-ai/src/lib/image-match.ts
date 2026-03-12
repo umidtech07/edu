@@ -20,6 +20,10 @@ const BLOCKED_TERMS = [
   "panties", "nude", "naked", "topless", "bodywear", "shapewear", "thong",
   "corset", "bralette", "leotard", "bodysuit", "plus size model",
   "body positive", "skin", "intimate", "sexy", "sensual",
+  // People/human-centric content — not appropriate for a nature/science kids app
+  "woman", "women", "lady", "ladies", "girl", "female", "man", "men",
+  "person", "people", "model", "portrait", "pose", "posing", "fashion",
+  "blogger", "influencer", "makeup", "beauty", "selfie",
 ];
 
 function isBlockedCandidate(candidate: PhotoCandidate): boolean {
@@ -38,8 +42,11 @@ function tokenize(text: string): string[] {
  * Score a candidate photo against the slide's title + bullets.
  *
  * Weights:
- *   alt text match  → 2 pts per keyword
- *   tags match      → 1 pt  per keyword
+ *   alt text match (word boundary)  → 2 pts per keyword
+ *   tags match (word boundary)      → 1 pt  per keyword
+ *
+ * Word-boundary matching avoids false positives from partial substring hits
+ * (e.g. "cat" matching "education" or "scatter").
  */
 function scoreCandidate(
   candidate: PhotoCandidate,
@@ -50,8 +57,11 @@ function scoreCandidate(
   const tags = (candidate.tags ?? "").toLowerCase();
 
   for (const kw of keywords) {
-    if (alt.includes(kw)) score += 2;
-    if (tags.includes(kw)) score += 1;
+    // Escape regex special chars then require word boundaries
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`\\b${escaped}\\b`);
+    if (re.test(alt)) score += 2;
+    if (re.test(tags)) score += 1;
   }
 
   return score;

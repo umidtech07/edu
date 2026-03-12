@@ -17,24 +17,27 @@ export async function POST(req: Request) {
     const safeTitle = title ?? "";
     const safeBullets: string[] = Array.isArray(bullets) ? bullets : [];
 
+    // Append "no people" so image APIs de-rank human-centric results
+    const safeQuery = `${imageQuery} no people`;
+
     // ── Query all 3 sources in parallel; silently ignore missing keys / errors ──
     const [pexelsPhotos, unsplashPhotos, pixabayPhotos] = await Promise.all([
       process.env.PEXELS_API_KEY
-        ? searchPexels(imageQuery, 12).catch((err) => {
+        ? searchPexels(safeQuery, 12).catch((err) => {
             console.error("[Pexels] fetch failed:", err?.message ?? err);
             return [];
           })
         : Promise.resolve([]),
 
       process.env.UNSPLASH_ACCESS_KEY
-        ? searchUnsplash(imageQuery, 12).catch((err) => {
+        ? searchUnsplash(safeQuery, 12).catch((err) => {
             console.error("[Unsplash] fetch failed:", err?.message ?? err);
             return [] as import("@/lib/unsplash").UnsplashPhoto[];
           })
         : Promise.resolve([]),
 
       process.env.PIXABAY_API_KEY
-        ? searchPixabay(imageQuery, 12).catch(() => [])
+        ? searchPixabay(safeQuery, 12).catch(() => [])
         : Promise.resolve([]),
     ]);
 
@@ -82,8 +85,9 @@ export async function POST(req: Request) {
     const { photo, score } = chooseBestPhoto(candidates, safeTitle, safeBullets, imageQuery);
 
     // Slide 0 uses minScore: 0 to always get something rather than falling back
-    // to Stability. All other slides require minScore ≥ 2 (≥ 1 strong alt match).
-    const threshold = typeof minScore === "number" ? minScore : 2;
+    // to Stability. All other slides require minScore ≥ 4 (≥ 2 word-boundary
+    // alt matches, or equivalent combination of alt + tag hits).
+    const threshold = typeof minScore === "number" ? minScore : 4;
 
     if (!photo || score < threshold) {
       return NextResponse.json({ image: null });

@@ -226,7 +226,6 @@ export default function Home() {
           (s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim()
         );
 
-      // Slide 0 gets Pexels first; Stability is only a fallback if Pexels fails for it
       // Primary mode: max 1 Pexels photo (try slide 0 first)
       const pexelTargets = isPrimary ? visualSlides.slice(0, 1) : visualSlides;
 
@@ -245,15 +244,13 @@ export default function Home() {
                   : slide.content
                   ? slide.content.split(/[.!?]+/).filter(Boolean)
                   : [],
-                // Slide 0 accepts any Pexels photo (score ≥ 0) to avoid Stability landing on the main slide
-                ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
             });
             const data = res.ok ? await res.json() : { image: null };
             if (data.image) patchSlide(slide.origIndex, data);
-            return { index: slide.origIndex, hasImage: !!data.image };
+            return { index: slide.origIndex, hasImage: !!data.image, imageData: data.image ? data : null };
           } catch {
-            return { index: slide.origIndex, hasImage: false };
+            return { index: slide.origIndex, hasImage: false, imageData: null };
           }
         })
       );
@@ -263,8 +260,18 @@ export default function Home() {
         pexelResults.filter((r) => r.hasImage).map((r) => r.index)
       );
 
-      // Slide 0 always gets Pexels; if Pexels gave slide 0 an image → Stability
-      // goes to the first imageless slide after 0. Otherwise Stability covers slide 0.
+      // If slide 0 failed the relevance threshold, borrow from the first other slide
+      // that got an image. If no slide has any image, Stability will cover slide 0.
+      if (!pexelImageIndices.has(0)) {
+        const donor = pexelResults.find((r) => r.hasImage && r.imageData && r.index !== 0);
+        if (donor) {
+          patchSlide(0, donor.imageData);
+          pexelImageIndices.add(0);
+        }
+      }
+
+      // If slide 0 has an image (own or borrowed) → Stability goes to the first
+      // imageless slide after 0. Otherwise Stability covers slide 0.
       let stabilityTargetIdx: number | null = null;
       if (pexelImageIndices.has(0)) {
         for (let i = 1; i < initSlides.length; i++) {
