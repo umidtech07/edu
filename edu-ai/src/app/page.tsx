@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Slide = {
   title: string;
@@ -45,6 +45,10 @@ export default function Home() {
 
   const [gradeLevel, setGradeLevel] = useState<number>(5);
   const [curriculum, setCurriculum] = useState<string>("Cambridge");
+  const [materialType, setMaterialType] = useState<"slides" | "activity" | "both">("slides");
+
+  // activity sheet state
+  const [activityLoading, setActivityLoading] = useState(false);
 
   // download state
   const [downloading, setDownloading] = useState(false);
@@ -169,8 +173,53 @@ export default function Home() {
     });
   }
 
+  async function generateActivity(topicStr: string) {
+    setActivityLoading(true);
+    try {
+      const actRes = await fetch("/api/generate/activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: topicStr, grade: gradeLevel, curriculum, deckTitle: deck?.deckTitle ?? topicStr }),
+      });
+      if (!actRes.ok) throw new Error("Activity generation failed");
+      const actData = await actRes.json();
+
+      const docxRes = await fetch("/api/export/activity-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...actData, topic: topicStr, grade: gradeLevel, deckTitle: deck?.deckTitle ?? topicStr }),
+      });
+      if (!docxRes.ok) throw new Error("Activity export failed");
+
+      const blob = await docxRes.blob();
+      const url = window.URL.createObjectURL(blob);
+      const title = (actData.sheetTitle || topicStr).replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\s+/g, "_");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title}_activity.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Activity sheet error:", e);
+      alert("Activity sheet generation failed. Check console.");
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
   async function generateLesson() {
     if (!topic.trim()) return;
+
+    // Activity-only mode: just generate + download the sheet, skip slides
+    if (materialType === "activity") {
+      setDeck(null);
+      setIdx(0);
+      setPastedImages({});
+      await generateActivity(topic);
+      return;
+    }
 
     setLoading(true);
     setImagesLoading(false);
@@ -290,6 +339,11 @@ export default function Home() {
       );
       setImagesLoading(false); // Slides are ready — Stability runs in background
 
+      // ── Step 5b: Activity sheet (both mode) — fire in background ──────────
+      if (materialType === "both") {
+        generateActivity(topic);
+      }
+
       // ── Step 5: Stability AI ───────────────────────────────────────────────
       if (stabilityTargetIdx !== null) {
         const stIdx = stabilityTargetIdx;
@@ -399,6 +453,16 @@ export default function Home() {
     }
   }
 
+  const deckRef = useRef<HTMLDivElement>(null);
+
+  // Smooth-scroll to the deck when slides first appear
+  const hasDeck = total > 0;
+  useEffect(() => {
+    if (hasDeck) {
+      deckRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [hasDeck]);
+
   const progressLabel = useMemo(() => {
     if (!total) return "";
     return `${idx + 1} / ${total}`;
@@ -470,7 +534,7 @@ export default function Home() {
               "📚 Curriculum-aligned",
               "🖼 Auto images",
               "📄 PDF export",
-              "✏️ Editable slides",
+              "✏️ Activity Sheets",
             ].map((f) => (
               <span
                 key={f}
@@ -600,7 +664,7 @@ export default function Home() {
 
               <button
                 onClick={generateLesson}
-                disabled={!topic.trim() || loading}
+                disabled={!topic.trim() || loading || activityLoading}
                 className="comic-btn shrink-0 rounded-xl px-6 py-3 text-lg font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
                   background: "#166534",
@@ -616,11 +680,14 @@ export default function Home() {
                   ? "Loading images…"
                   : stabilityIdx !== null
                   ? "AI image…"
+                  : activityLoading
+                  ? "Making worksheet…"
                   : "Generate ✦"}
               </button>
             </div>
 
-            <div className="mt-4 flex gap-3 flex-wrap">
+            <div className="mt-4 flex flex-wrap items-end gap-6">
+            <div className="flex gap-3 flex-wrap">
               <div className="flex flex-col gap-1">
                 <label
                   className="text-xs font-black uppercase tracking-widest"
@@ -683,17 +750,52 @@ export default function Home() {
               </div>
             </div>
 
-            <div
-              className="mt-3 text-xs font-bold"
-              style={{ color: "#6b7280" }}
-            >
-              Tip: Use ← → arrow keys to change slides.
+            {/* Material type selector */}
+            <div className="flex flex-col gap-1">
+              <label
+                className="text-xs font-black uppercase tracking-widest"
+                style={{ color: "#374151" }}
+              >
+                Generate
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {(
+                  [
+                    { value: "slides", label: "Slide Deck" },
+                    { value: "activity", label: "✏️ Activity Sheet" },
+                    { value: "both", label: "Both" },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setMaterialType(value)}
+                    className="rounded-lg px-3 py-1.5 text-sm font-black transition-all"
+                    style={{
+                      background: materialType === value ? "#166534" : "#ffffff",
+                      color: materialType === value ? "#ffffff" : "#374151",
+                      border: `3px solid ${materialType === value ? "#14532d" : "#d1d5db"}`,
+                      boxShadow: materialType === value ? "3px 3px 0 rgb(48,47,45)" : "2px 2px 0 #d1d5db",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {materialType !== "slides" && (
+                <p className="mt-1 text-xs font-bold" style={{ color: "#6b7280" }}>
+                  Activity sheet downloads as a .docx file automatically.
+                </p>
+              )}
             </div>
+
+            </div>
+
           </div>
         </div>
 
         {/* ── Slide stage ── */}
-        <div className="mt-8">
+        <div ref={deckRef} className="mt-8">
           {!total ? (
             <div
               className="rounded-2xl p-12 text-center"
