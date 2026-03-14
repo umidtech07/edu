@@ -9,7 +9,7 @@ const patrickHand = Patrick_Hand({
 });
 
 export const metadata: Metadata = {
-  title: "Cipher",
+  title: "Classory AI",
   description: "AI-powered lesson slide generator",
 };
 

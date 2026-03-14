@@ -694,7 +694,7 @@ export default function Home() {
               className="text-2xl md:text-3xl font-black"
               style={{ color: "#ffffff", letterSpacing: "-0.5px" }}
             >
-             Cipher<span style={{ color: "#fde68a" }}>AI</span>
+             Classory<span style={{ color: "#fde68a" }}>AI</span>
             </span>
           </div>
 
@@ -795,7 +795,7 @@ export default function Home() {
                 className="text-2xl md:text-3xl font-black"
                 style={{ color: "#ffffff", letterSpacing: "-0.5px" }}
               >
-               Cipher <span style={{ color: "#fde68a" }}>AI</span>
+               Classory <span style={{ color: "#fde68a" }}>AI</span>
               </span>
             </div>
 
