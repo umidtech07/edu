@@ -520,7 +520,7 @@ export async function POST(req: Request) {
         layout: TableLayoutType.FIXED,
         rows: [new TableRow({ children: cells })],
         borders: { top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder(), insideHorizontal: noBorder(), insideVertical: noBorder() },
-        float: { horizontalAnchor: "text", verticalAnchor: "text", absoluteHorizontalPosition: convertInchesToTwip(1.5) },
+        alignment: AlignmentType.CENTER,
       });
     }
 

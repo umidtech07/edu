@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFArray, PDFString } from "pdf-lib";
+import sharp from "sharp";
 
 export const runtime = "nodejs";
 
@@ -17,8 +18,8 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
     const base64 = url.split(",")[1] ?? "";
     return Buffer.from(base64, "base64");
   }
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Failed to fetch: ${r.status}`);
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`Failed to fetch image: ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
 }
 
@@ -240,22 +241,38 @@ export async function POST(req: Request) {
 
         if (s.image) {
           try {
-            const bytes = await fetchBytes(s.image);
-            let embedded;
-            try { embedded = await pdf.embedJpg(bytes); }
-            catch { embedded = await pdf.embedPng(bytes); }
+            let pngBytes: Uint8Array;
+            if (s.image.startsWith("data:image/svg+xml")) {
+              const svgBase64 = s.image.split(",")[1] ?? "";
+              let svgBuf = Buffer.from(svgBase64, "base64");
+              try {
+                pngBytes = new Uint8Array(await sharp(svgBuf).png().toBuffer());
+              } catch {
+                // Retry after escaping bare & which GPT sometimes leaves unescaped in text nodes
+                const fixedSvg = svgBuf
+                  .toString("utf8")
+                  .replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;");
+                svgBuf = Buffer.from(fixedSvg, "utf8");
+                pngBytes = new Uint8Array(await sharp(svgBuf).png().toBuffer());
+              }
+            } else {
+              const raw = await fetchBytes(s.image);
+              // Convert to PNG via sharp so we always have a consistent format
+              pngBytes = new Uint8Array(
+                await sharp(raw).png().toBuffer()
+              );
+            }
 
+            const embedded = await pdf.embedPng(pngBytes);
             const dims = embedded.scale(1);
-            // "contain" fit — image stays inside the box
             const scale = Math.min((imgW - 8) / dims.width, (imgH - 8) / dims.height);
             const drawW = dims.width * scale;
             const drawH = dims.height * scale;
             const dx = imgX + (imgW - drawW) / 2;
             const dy = imgY + (imgH - drawH) / 2;
-
             page.drawImage(embedded, { x: dx, y: dy, width: drawW, height: drawH });
           } catch {
-            // image fetch failed — show nothing (box already drawn)
+            // image fetch/convert failed — box already drawn, leave empty
           }
         }
 

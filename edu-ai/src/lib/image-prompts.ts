@@ -1,18 +1,16 @@
-export function buildCartoonPrompt(title: string, bullets: string[]) {
+export function buildRealisticPrompt(title: string, bullets: string[]) {
   const mainConcept = bullets?.slice(0, 2).join(", ");
 
   return [
-    `Cute educational cartoon illustration of ${title}.`,
-    mainConcept ? `Concept: ${mainConcept}.` : "",
-    "Simple educational diagram.",
-    "Flat vector cartoon style.",
-    "Bright friendly colors.",
-    "Minimal shapes.",
-    "Children textbook illustration.",
-    "White background.",
+    `Photorealistic educational image of ${title}.`,
+    mainConcept ? `Showing: ${mainConcept}.` : "",
+    "High quality photograph.",
+    "Sharp focus, natural lighting.",
+    "Clean composition.",
     "No text.",
     "No labels.",
-    "No watermark."
+    "No watermark.",
+    "No people.",
   ]
     .filter(Boolean)
     .join(" ");

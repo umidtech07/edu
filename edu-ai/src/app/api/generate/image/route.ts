@@ -58,8 +58,8 @@ export async function POST(req: Request) {
 
       ...unsplashPhotos.map((p) => ({
         url: p.urls.regular,
-        alt: p.alt_description ?? p.description ?? "",
-        tags: `${imageQuery} ${p.description ?? ""}`.trim(),
+        alt: [p.alt_description, p.description].filter(Boolean).join(" "),
+        tags: p.description ?? "",
         photographer: p.user.name,
         credit: `Photo by ${p.user.name} on Unsplash`,
         // Unsplash ToS: attribution link must include UTM params
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
     // Slide 0 uses minScore: 0 to always get something rather than falling back
     // to Stability. All other slides require minScore ≥ 4 (≥ 2 word-boundary
     // alt matches, or equivalent combination of alt + tag hits).
-    const threshold = typeof minScore === "number" ? minScore : 4;
+    const threshold = typeof minScore === "number" ? minScore : 2;
 
     if (!photo || score < threshold) {
       return NextResponse.json({ image: null });

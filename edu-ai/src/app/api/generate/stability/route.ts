@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateStabilityImage } from "@/lib/stability";
-import { buildCartoonPrompt } from "@/lib/image-prompts";
+import { buildRealisticPrompt } from "@/lib/image-prompts";
 
 export const runtime = "nodejs";
 
@@ -15,13 +15,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const cartoonPrompt = buildCartoonPrompt(
+    const realisticPrompt = buildRealisticPrompt(
       title ?? "",
       Array.isArray(bullets) ? bullets : []
     );
 
     const image = await generateStabilityImage({
-      prompt: cartoonPrompt,
+      prompt: realisticPrompt,
       aspectRatio: "16:9",
       outputFormat: "png",
     });

@@ -2,17 +2,70 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+function styleSvgForSlide(svgString: string, slide: { title: string; bullets?: string[]; content?: string | null }): string {
+  if (typeof window === "undefined") return svgString;
+  const slideTitle = slide.title.toLowerCase().trim();
+  // Include 3+ char words so short words like "sun", "air" are captured
+  const keywords = new Set(
+    [slide.title, ...(slide.bullets ?? []), slide.content ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((w) => w.length > 2)
+  );
+  try {
+    const doc = new DOMParser().parseFromString(svgString, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return svgString;
+    const textEls = Array.from(doc.querySelectorAll("text"));
+    // Skip title bar (y < 50)
+    const labelEls = textEls.filter((el) => {
+      const y = parseFloat(
+        el.getAttribute("y") ?? el.querySelector("tspan")?.getAttribute("y") ?? "999"
+      );
+      return y >= 50;
+    });
+    const scored = labelEls.map((el) => {
+      const labelText = (el.textContent ?? "").toLowerCase().trim();
+      const words = labelText.split(/\W+/).filter((w) => w.length > 2);
+      let score = words.filter((w) => keywords.has(w)).length;
+      // Strong bonus for near-exact match with slide title — prevents false ties
+      if (labelText === slideTitle) {
+        score += 10;
+      } else if (slideTitle.includes(labelText) || labelText.includes(slideTitle)) {
+        score += 5;
+      }
+      return { el, score };
+    });
+    const maxScore = Math.max(...scored.map((s) => s.score), 0);
+    if (maxScore === 0) return svgString;
+    scored.forEach(({ el, score }) => {
+      if (score === maxScore) {
+        el.setAttribute("fill", "#16a34a");
+        el.setAttribute("font-weight", "bold");
+        const fs = parseFloat(el.getAttribute("font-size") ?? "13");
+        el.setAttribute("font-size", String(Math.round(fs * 1.15)));
+      } else {
+        el.setAttribute("opacity", "0.4");
+      }
+    });
+    return new XMLSerializer().serializeToString(doc.documentElement);
+  } catch {
+    return svgString;
+  }
+}
+
 type Slide = {
   title: string;
   bullets: string[];
   content?: string | null;
   image?: string | null;
   imageAlt?: string;
-  imageSource?: "pexels" | "unsplash" | "pixabay" | "stability" | null;
+  imageSource?: "pexels" | "unsplash" | "pixabay" | "stability" | "diagram" | null;
   imageCredit?: string | null;
   /** Clickable URL for attribution (Unsplash requires a link; null for other sources) */
   imageCreditUrl?: string | null;
   youtubeVideoId?: string | null;
+  visualType?: "photo" | "diagram" | null;
 };
 
 type Deck = {
@@ -40,6 +93,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [imagesLoading, setImagesLoading] = useState(false);
   const [stabilityIdx, setStabilityIdx] = useState<number | null>(null);
+  const [diagramLoadingSlides, setDiagramLoadingSlides] = useState<Set<number>>(new Set());
+  const [sharedDiagramSvg, setSharedDiagramSvg] = useState<string | null>(null);
   const [idx, setIdx] = useState(0);
   const [slideDir, setSlideDir] = useState<"left" | "right">("right");
 
@@ -66,6 +121,11 @@ export default function Home() {
   const displayImage = pastedEntry?.dataUrl ?? current?.image ?? null;
   const imageCredit = pastedEntry?.credit ?? current?.imageCredit ?? null;
   const imageCreditUrl = pastedEntry ? null : current?.imageCreditUrl ?? null;
+
+  const styledDiagramSvg = useMemo(() => {
+    if (!sharedDiagramSvg || current?.imageSource !== "diagram") return null;
+    return styleSvgForSlide(sharedDiagramSvg, current);
+  }, [sharedDiagramSvg, idx, current]);
 
   const canPrev = idx > 0;
   const canNext = idx < total - 1;
@@ -164,12 +224,12 @@ export default function Home() {
     return result;
   }
 
-  function patchSlide(index: number, patch: Partial<Slide>) {
+  function patchSlide(index: number, patch: Partial<Slide>, applyFill = false) {
     setDeck((prev) => {
       if (!prev?.slides) return prev;
       const slides = [...prev.slides];
       slides[index] = { ...slides[index], ...patch };
-      return { ...prev, slides };
+      return { ...prev, slides: applyFill ? applyFillRules(slides) : slides };
     });
   }
 
@@ -223,7 +283,8 @@ export default function Home() {
 
     setLoading(true);
     setImagesLoading(false);
-    setStabilityIdx(null);
+    setDiagramLoadingSlides(new Set());
+    setSharedDiagramSvg(null);
     setDeck(null);
     setIdx(0);
     setPastedImages({});
@@ -255,6 +316,7 @@ export default function Home() {
         imageCredit: null,
         imageCreditUrl: null,
         youtubeVideoId: null,
+        visualType: s.visualType ?? null,
       }));
 
       setDeck({ deckTitle, slides: initSlides });
@@ -262,23 +324,122 @@ export default function Home() {
       setLoading(false);
       setImagesLoading(true);
 
-      // ── Step 2: Images + YouTube in parallel ───────────────────────────────
-      const visualSlides: Array<{
+      // ── Step 2: Split visual slides by intended visual type ──────────────
+      let visualSlides: Array<{
         origIndex: number;
         title: string;
         bullets: string[];
         content?: string | null;
         imageQuery: string;
+        visualType: "photo" | "diagram" | null;
       }> = rawSlides
         .map((s: any, i: number) => ({ ...s, origIndex: i }))
         .filter(
           (s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim()
         );
 
-      // Primary mode: max 1 Pexels photo (try slide 0 first)
-      const pexelTargets = isPrimary ? visualSlides.slice(0, 1) : visualSlides;
+      // Rule 1: Slide 0 always gets a pexels/unsplash photo with general meaning.
+      // If the AI gave slide 0 a diagram visualType or no imageQuery, inject it as a photo slide.
+      const slide0InVisual = visualSlides.some((s) => s.origIndex === 0);
+      if (!slide0InVisual && rawSlides[0]) {
+        const s0 = rawSlides[0];
+        visualSlides = [
+          {
+            origIndex: 0,
+            title: s0.title ?? "",
+            bullets: s0.bullets ?? [],
+            content: s0.content ?? null,
+            imageQuery: deckTitle,
+            visualType: "photo",
+          },
+          ...visualSlides,
+        ];
+      }
 
-      // Pexels: all in parallel, stream each result as it arrives
+      // Rule 3: Diagram slides at most 2 — exclude slide 0 (always photo)
+      const intentDiagramSlides = visualSlides.filter(
+        (s) => s.visualType === "diagram" && s.origIndex !== 0
+      );
+      // Rule 2: Photo slides — slide 0 always here; other slides follow their visualType
+      const photoSlides = visualSlides.filter(
+        (s) => s.origIndex === 0 || s.visualType !== "diagram"
+      );
+
+      // ── Step 3: Diagram slides — fire ONE shared call in background ─────
+      // Track state for sharing between step 3 and step 7
+      let diagramFetchFired = false;
+      let diagramFetchDone = false;
+      let diagramFetchResult: any = null;
+      const pendingDiagramIndices = new Set<number>();
+
+      function fireDiagramFetch() {
+        diagramFetchFired = true;
+        fetch("/api/generate/diagram", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deckTitle,
+            slides: rawSlides.map((s: any) => ({
+              title: s.title,
+              bullets: s.bullets ?? [],
+              content: s.content ?? null,
+            })),
+          }),
+        })
+          .then((res) => (res.ok ? res.json() : { image: null }))
+          .then((data) => {
+            diagramFetchDone = true;
+            diagramFetchResult = data;
+            if (data.image) {
+              try {
+                const b64 = (data.image as string).split(",")[1] ?? "";
+                setSharedDiagramSvg(atob(b64));
+              } catch {}
+              setDeck((prev) => {
+                if (!prev?.slides) return prev;
+                const slides = [...prev.slides];
+                pendingDiagramIndices.forEach((i) => {
+                  slides[i] = {
+                    ...slides[i],
+                    image: data.image,
+                    imageSource: "diagram",
+                    imageAlt: data.imageAlt ?? "Diagram",
+                    imageCredit: data.imageCredit ?? "AI-generated diagram",
+                  };
+                });
+                return { ...prev, slides };
+              });
+            }
+          })
+          .catch(() => { diagramFetchDone = true; })
+          .finally(() =>
+            setDiagramLoadingSlides(new Set())
+          );
+      }
+
+      const cappedDiagramSlides = intentDiagramSlides.slice(0, 2);
+      if (cappedDiagramSlides.length > 0) {
+        cappedDiagramSlides.forEach((s) => pendingDiagramIndices.add(s.origIndex));
+        setDiagramLoadingSlides(new Set(cappedDiagramSlides.map((s) => s.origIndex)));
+        fireDiagramFetch();
+      }
+
+      // ── Step 4: Pexels / Unsplash / Pixabay for photo slides ─────────────
+      // Always reserve the last photo slide (non-slide-0) for Stability so it
+      // always gets an AI image. If all photo slides are slide 0, don't reserve.
+      const nonFirstPhotoSlides = photoSlides.filter((s) => s.origIndex !== 0);
+      const stabilityReserved =
+        nonFirstPhotoSlides.length > 0
+          ? nonFirstPhotoSlides[nonFirstPhotoSlides.length - 1]
+          : null;
+      const stabilityTargetIdx: number | null =
+        stabilityReserved?.origIndex ?? null;
+
+      // Exclude the reserved Stability slide from Pexels/Unsplash/Pixabay search
+      const pexelTargets = isPrimary
+        ? photoSlides.slice(0, 1)
+        : photoSlides.filter((s) => s.origIndex !== stabilityTargetIdx);
+
       const pexelResults = await Promise.all(
         pexelTargets.map(async (slide) => {
           try {
@@ -286,69 +447,47 @@ export default function Home() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                imageQuery: slide.imageQuery,
-                title: slide.title,
-                bullets: slide.bullets?.length
+                // Rule 1: slide 0 uses deckTitle as general-meaning query
+                imageQuery: slide.origIndex === 0 ? deckTitle : slide.imageQuery,
+                title: slide.origIndex === 0 ? deckTitle : slide.title,
+                bullets: slide.origIndex === 0
+                  ? []
+                  : slide.bullets?.length
                   ? slide.bullets
                   : slide.content
                   ? slide.content.split(/[.!?]+/).filter(Boolean)
                   : [],
+                // Slide 0 accepts any photo (minScore: 0)
+                ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
             });
             const data = res.ok ? await res.json() : { image: null };
             if (data.image) patchSlide(slide.origIndex, data);
-            return { index: slide.origIndex, hasImage: !!data.image, imageData: data.image ? data : null };
+            return { index: slide.origIndex, hasImage: !!data.image };
           } catch {
-            return { index: slide.origIndex, hasImage: false, imageData: null };
+            return { index: slide.origIndex, hasImage: false };
           }
         })
       );
 
-      // ── Step 3: Determine Stability target ────────────────────────────────
+      // ── Step 5: Note which slides got real photos ──────────────────────────
       const pexelImageIndices = new Set(
         pexelResults.filter((r) => r.hasImage).map((r) => r.index)
       );
 
-      // If slide 0 failed the relevance threshold, borrow from the first other slide
-      // that got an image. If no slide has any image, Stability will cover slide 0.
-      if (!pexelImageIndices.has(0)) {
-        const donor = pexelResults.find((r) => r.hasImage && r.imageData && r.index !== 0);
-        if (donor) {
-          patchSlide(0, donor.imageData);
-          pexelImageIndices.add(0);
-        }
-      }
-
-      // If slide 0 has an image (own or borrowed) → Stability goes to the first
-      // imageless slide after 0. Otherwise Stability covers slide 0.
-      let stabilityTargetIdx: number | null = null;
-      if (pexelImageIndices.has(0)) {
-        for (let i = 1; i < initSlides.length; i++) {
-          if (!pexelImageIndices.has(i)) {
-            stabilityTargetIdx = i;
-            break;
-          }
-        }
-      } else {
-        stabilityTargetIdx = 0;
-      }
-
-      // ── Step 4: Fill rules after Pexels ───────────────────────────────────
+      // Apply fill-rules after Pexels
       setDeck((prev) =>
         prev ? { ...prev, slides: applyFillRules(prev.slides ?? []) } : prev
       );
-      setImagesLoading(false); // Slides are ready — Stability runs in background
+      setImagesLoading(false); // Slides are ready — background tasks run below
 
-      // ── Step 5b: Activity sheet (both mode) — fire in background ──────────
-      if (materialType === "both") {
-        generateActivity(topic);
-      }
-
-      // ── Step 5: Stability AI ───────────────────────────────────────────────
+      // ── Step 6: Stability AI (one photo slide) ────────────────────────────
+      let stabilityFinalIdx: number | null = null;
       if (stabilityTargetIdx !== null) {
         const stIdx = stabilityTargetIdx;
+        stabilityFinalIdx = stIdx;
         setStabilityIdx(stIdx);
-        fetch("/api/generate/stability", {
+        await fetch("/api/generate/stability", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -372,6 +511,53 @@ export default function Home() {
             setStabilityIdx(null);
             console.error("Stability error:", e);
           });
+      }
+
+      // ── Step 7: Diagram fallback for photo slides that got no image (skip slide 0) ─
+      const coveredByPhotos = new Set([
+        ...pexelImageIndices,
+        ...(stabilityFinalIdx !== null ? [stabilityFinalIdx] : []),
+      ]);
+      const diagramFallbackSlides = photoSlides
+        .filter((s) => s.origIndex > 0 && !coveredByPhotos.has(s.origIndex))
+        .slice(0, 2); // Cap at 2 diagram fallback slides
+
+      if (diagramFallbackSlides.length > 0) {
+        diagramFallbackSlides.forEach((s) => pendingDiagramIndices.add(s.origIndex));
+        setDiagramLoadingSlides((prev) => {
+          const next = new Set(prev);
+          diagramFallbackSlides.forEach((s) => next.add(s.origIndex));
+          return next;
+        });
+
+        if (!diagramFetchFired) {
+          // No call made yet in step 3 — fire it now
+          fireDiagramFetch();
+        } else if (diagramFetchDone && diagramFetchResult?.image) {
+          // Call already resolved — patch fallback slides immediately
+          const data = diagramFetchResult;
+          setDeck((prev) => {
+            if (!prev?.slides) return prev;
+            const slides = [...prev.slides];
+            diagramFallbackSlides.forEach((s) => {
+              slides[s.origIndex] = {
+                ...slides[s.origIndex],
+                image: data.image,
+                imageSource: "diagram",
+                imageAlt: data.imageAlt ?? "Diagram",
+                imageCredit: data.imageCredit ?? "AI-generated diagram",
+              };
+            });
+            return { ...prev, slides };
+          });
+          setDiagramLoadingSlides(new Set());
+        }
+        // else: call in-flight — pendingDiagramIndices already updated, will be patched on resolve
+      }
+
+      // ── Activity sheet (both mode) — fire in background ───────────────────
+      if (materialType === "both") {
+        generateActivity(topic);
       }
 
     } finally {
@@ -408,7 +594,7 @@ export default function Home() {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.error("Export failed:", err);
-        alert(err?.error || "Export failed. Check console.");
+        alert(err?.details || err?.error || `Download failed (${res.status}). Please try again.`);
         return;
       }
 
@@ -678,8 +864,6 @@ export default function Home() {
                   ? "Writing slides…"
                   : imagesLoading
                   ? "Loading images…"
-                  : stabilityIdx !== null
-                  ? "AI image…"
                   : activityLoading
                   ? "Making worksheet…"
                   : "Generate ✦"}
@@ -1004,7 +1188,7 @@ export default function Home() {
 
                       {/* Image column */}
                       <div
-                        className="w-[42%] p-2 md:p-3 flex flex-col"
+                        className={`${!pastedEntry && current?.imageSource === "diagram" ? "w-[62%]" : "w-[42%]"} p-2 md:p-3 flex flex-col`}
                         style={{
                           background: "#f8fafc",
                           borderLeft: "3px solid #e2e8f0",
@@ -1018,12 +1202,29 @@ export default function Home() {
                               onPaste={(e) => handleImagePaste(e, idx)}
                               title="Click here and paste to replace image (Ctrl+V)"
                             >
-                              <img
-                                src={displayImage}
-                                alt={current?.imageAlt || ""}
-                                className="w-full h-full object-contain rounded-lg"
-                                style={{ border: "2px solid #e2e8f0" }}
-                              />
+                              {!pastedEntry && current?.imageSource === "diagram" ? (
+                                <div
+                                  className="w-full h-full flex items-center justify-center overflow-hidden rounded-lg [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:max-h-full"
+                                  style={{ border: "2px solid #e2e8f0" }}
+                                  dangerouslySetInnerHTML={{
+                                    __html: styledDiagramSvg ?? (() => {
+                                      try {
+                                        const b64 = displayImage.split(",")[1];
+                                        return b64 ? atob(b64) : "";
+                                      } catch {
+                                        return "";
+                                      }
+                                    })(),
+                                  }}
+                                />
+                              ) : (
+                                <img
+                                  src={displayImage}
+                                  alt={current?.imageAlt || ""}
+                                  className="w-full h-full object-contain rounded-lg"
+                                  style={{ border: "2px solid #e2e8f0" }}
+                                />
+                              )}
                               <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
                                 <span
                                   className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-black px-2 py-1 rounded-lg"
@@ -1037,7 +1238,7 @@ export default function Home() {
                                 </span>
                               </div>
                             </div>
-                          ) : imagesLoading || stabilityIdx === idx ? (
+                          ) : imagesLoading || stabilityIdx === idx || diagramLoadingSlides.has(idx) ? (
                             <div
                               className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
                               style={{
@@ -1049,7 +1250,9 @@ export default function Home() {
                                 className="text-[10px] md:text-xs font-black"
                                 style={{ color: "#94a3b8" }}
                               >
-                                {stabilityIdx === idx
+                                {diagramLoadingSlides.has(idx)
+                                  ? "Generating diagram…"
+                                  : stabilityIdx === idx
                                   ? "Generating AI image…"
                                   : "Loading image…"}
                               </span>
