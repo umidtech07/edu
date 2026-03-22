@@ -60,6 +60,12 @@ Both exporters (`/api/export/pptx`, `/api/export/pdf`) receive the full deck JSO
 | `src/lib/stability.ts` | Stability AI image generation (returns base64 data URI) |
 | `src/lib/image-prompts.ts` | Builds cartoon-style prompts for Stability AI |
 
+### Imageless Slide Types — HARD RULE
+
+**Quiz, true/false, and reflection question slides must ALWAYS have `image: null`, `imageSource: null`, and `youtubeVideoId: null`.**
+
+This check must happen BEFORE any Pexels / Stability AI / YouTube logic. Never fetch or assign an image to these slide types under any circumstances.
+
 ### Slide Type Schema
 
 ```ts

@@ -66,6 +66,13 @@ type Slide = {
   imageCreditUrl?: string | null;
   youtubeVideoId?: string | null;
   visualType?: "photo" | "diagram" | null;
+  /** Whether the imageQuery is a literal search term or a metaphorical scene description */
+  imageStrategy?: "literal" | "metaphor" | null;
+  slideType?: "intro" | "explanation" | "example" | "fact" | "comparison" | "reflection" | "question" | "quiz" | "recap" | null;
+  /** Optional second image for comparison slides (Side B image) */
+  imageB?: string | null;
+  imageBSource?: "pexels" | "unsplash" | "pixabay" | "stability" | "diagram" | null;
+  imageBCredit?: string | null;
 };
 
 type Deck = {
@@ -160,10 +167,12 @@ export default function Home() {
     const lastTwoStart = Math.max(0, n - 2);
     const first = result[0];
 
+    const isNoImageType = (s: Slide) => s.slideType ? ["reflection","question","quiz","recap"].includes(s.slideType) : false;
+
     // Rule 1: last 2 slides borrow first slide's image if imageless (skip video slides)
     if (first?.image) {
       for (let i = lastTwoStart; i < n; i++) {
-        if (!result[i].image && !result[i].youtubeVideoId) {
+        if (!isNoImageType(result[i]) && !result[i].image && !result[i].youtubeVideoId) {
           result[i] = {
             ...result[i],
             image: first.image,
@@ -186,7 +195,7 @@ export default function Home() {
       const targets = result
         .map((s, i) => ({ s, i }))
         .filter(
-          ({ i, s }) => !excluded.has(i) && !s.image && !s.youtubeVideoId
+          ({ i, s }) => !excluded.has(i) && !s.image && !s.youtubeVideoId && !isNoImageType(s)
         );
 
       if (sources.length > 0 && targets.length > 0) {
@@ -218,6 +227,23 @@ export default function Home() {
             imageCreditUrl: best.s.imageCreditUrl,
           };
         });
+      }
+    }
+
+    // Absolute guard: quiz / true-false / reflection / question slides must never have images
+    const STRICT_NO_IMAGE = new Set(["reflection", "question", "quiz", "recap"]);
+    for (let i = 0; i < n; i++) {
+      const st = result[i].slideType;
+      if (st && STRICT_NO_IMAGE.has(st) && (result[i].image || result[i].youtubeVideoId)) {
+        result[i] = {
+          ...result[i],
+          image: null,
+          imageSource: null,
+          imageAlt: "",
+          imageCredit: null,
+          imageCreditUrl: null,
+          youtubeVideoId: null,
+        };
       }
     }
 
@@ -317,6 +343,8 @@ export default function Home() {
         imageCreditUrl: null,
         youtubeVideoId: null,
         visualType: s.visualType ?? null,
+        imageStrategy: s.imageStrategy ?? null,
+        slideType: s.slideType ?? null,
       }));
 
       setDeck({ deckTitle, slides: initSlides });
@@ -332,16 +360,22 @@ export default function Home() {
         content?: string | null;
         imageQuery: string;
         visualType: "photo" | "diagram" | null;
+        imageStrategy?: "literal" | "metaphor" | null;
+        slideType?: string | null;
       }> = rawSlides
         .map((s: any, i: number) => ({ ...s, origIndex: i }))
         .filter(
           (s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim()
+            && !(s.slideType && ["reflection","question","quiz","recap"].includes(s.slideType))
         );
 
       // Rule 1: Slide 0 always gets a pexels/unsplash photo with general meaning.
       // If the AI gave slide 0 a diagram visualType or no imageQuery, inject it as a photo slide.
+      // Skip if slide 0 is a no-image type (quiz, reflection, question, recap).
+      const NO_IMAGE_TYPES = ["reflection", "question", "quiz", "recap"];
+      const slide0IsNoImageType = rawSlides[0]?.slideType && NO_IMAGE_TYPES.includes(rawSlides[0].slideType);
       const slide0InVisual = visualSlides.some((s) => s.origIndex === 0);
-      if (!slide0InVisual && rawSlides[0]) {
+      if (!slide0InVisual && rawSlides[0] && !slide0IsNoImageType) {
         const s0 = rawSlides[0];
         visualSlides = [
           {
@@ -425,20 +459,13 @@ export default function Home() {
       }
 
       // ── Step 4: Pexels / Unsplash / Pixabay for photo slides ─────────────
-      // Always reserve the last photo slide (non-slide-0) for Stability so it
-      // always gets an AI image. If all photo slides are slide 0, don't reserve.
-      const nonFirstPhotoSlides = photoSlides.filter((s) => s.origIndex !== 0);
-      const stabilityReserved =
-        nonFirstPhotoSlides.length > 0
-          ? nonFirstPhotoSlides[nonFirstPhotoSlides.length - 1]
-          : null;
-      const stabilityTargetIdx: number | null =
-        stabilityReserved?.origIndex ?? null;
-
-      // Exclude the reserved Stability slide from Pexels/Unsplash/Pixabay search
+      // Run Pexels/Unsplash/Pixabay for all photo slides first.
+      // Primary mode: slide 0 only (keeps existing primary behavior).
+      // Non-primary: all photo slides try stock sources — the DALL-E slot is
+      // discovered *after* results arrive (first slide that got no stock photo).
       const pexelTargets = isPrimary
         ? photoSlides.slice(0, 1)
-        : photoSlides.filter((s) => s.origIndex !== stabilityTargetIdx);
+        : photoSlides;
 
       const pexelResults = await Promise.all(
         pexelTargets.map(async (slide) => {
@@ -457,6 +484,8 @@ export default function Home() {
                   : slide.content
                   ? slide.content.split(/[.!?]+/).filter(Boolean)
                   : [],
+                // imageStrategy guides semantic scoring: metaphor slides get richer scene-based queries
+                imageStrategy: slide.origIndex === 0 ? "literal" : slide.imageStrategy ?? null,
                 // Slide 0 accepts any photo (minScore: 0)
                 ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
@@ -475,13 +504,65 @@ export default function Home() {
         pexelResults.filter((r) => r.hasImage).map((r) => r.index)
       );
 
+      // Determine Stability target now that stock photo results are known.
+      // Priority (non-primary): imageless+abstract slides (no imageQuery, not quiz/recap) →
+      //   metaphor-failed photo slide → abstract-type failed photo slide → any failed →
+      //   imageless+abstract (force) → most abstract photo slide (force)
+      let stabilityTargetIdx: number | null = null;
+      if (isPrimary) {
+        const nonFirstPhotoSlides = photoSlides.filter((s) => s.origIndex !== 0);
+        const reserved = nonFirstPhotoSlides.length > 0
+          ? nonFirstPhotoSlides[nonFirstPhotoSlides.length - 1]
+          : null;
+        stabilityTargetIdx = reserved?.origIndex ?? null;
+      } else {
+        const abstractSlideTypes = new Set(["explanation", "comparison"]);
+        const failedSlides = photoSlides.filter(
+          (s) => s.origIndex > 0 && !pexelImageIndices.has(s.origIndex)
+        );
+        // Among failed: prefer metaphor → explanation/comparison type → any
+        const metaphorFailed = failedSlides.find((s) => s.imageStrategy === "metaphor");
+        const abstractFailed = failedSlides.find((s) => abstractSlideTypes.has(s.slideType ?? ""));
+        const anyFailed = metaphorFailed ?? abstractFailed ?? failedSlides[0];
+
+        if (anyFailed) {
+          stabilityTargetIdx = anyFailed.origIndex;
+        } else {
+          // All photo slides got stock images — prefer truly imageless+abstract slides first:
+          // slides the AI gave no imageQuery (deep-thinking content, not quiz/recap)
+          const abstractTypeOrder = ["explanation", "comparison", "fact", "example"];
+          const imagelessAbstract = (rawSlides as any[])
+            .map((s: any, i: number) => ({ ...s, origIndex: i }))
+            .filter((s: any) =>
+              s.origIndex > 0 &&
+              !s.imageQuery &&
+              !NO_IMAGE_TYPES.includes(s.slideType ?? "")
+            )
+            .sort((a: any, b: any) => {
+              const ai = abstractTypeOrder.indexOf(a.slideType ?? "");
+              const bi = abstractTypeOrder.indexOf(b.slideType ?? "");
+              return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+            })[0] ?? null;
+
+          if (imagelessAbstract) {
+            stabilityTargetIdx = imagelessAbstract.origIndex;
+          } else {
+            // Force on most abstract photo slide
+            const nonFirstPhoto = photoSlides.filter((s) => s.origIndex > 0);
+            const metaphorSlide = nonFirstPhoto.find((s) => s.imageStrategy === "metaphor");
+            const abstractPhotoSlide = nonFirstPhoto.find((s) => abstractSlideTypes.has(s.slideType ?? ""));
+            stabilityTargetIdx = (metaphorSlide ?? abstractPhotoSlide ?? nonFirstPhoto[nonFirstPhoto.length - 1])?.origIndex ?? null;
+          }
+        }
+      }
+
       // Apply fill-rules after Pexels
       setDeck((prev) =>
         prev ? { ...prev, slides: applyFillRules(prev.slides ?? []) } : prev
       );
       setImagesLoading(false); // Slides are ready — background tasks run below
 
-      // ── Step 6: Stability AI (one photo slide) ────────────────────────────
+      // ── Step 6: DALL-E 3 AI image (one photo slide that needs it) ─────────
       let stabilityFinalIdx: number | null = null;
       if (stabilityTargetIdx !== null) {
         const stIdx = stabilityTargetIdx;
@@ -493,6 +574,8 @@ export default function Home() {
           body: JSON.stringify({
             title: rawSlides[stIdx].title,
             bullets: rawSlides[stIdx].bullets,
+            imageQuery: rawSlides[stIdx].imageQuery ?? null,
+            imageStrategy: rawSlides[stIdx].imageStrategy ?? null,
           }),
         })
           .then((res) => (res.ok ? res.json() : { image: null }))
@@ -553,6 +636,35 @@ export default function Home() {
           setDiagramLoadingSlides(new Set());
         }
         // else: call in-flight — pendingDiagramIndices already updated, will be patched on resolve
+      }
+
+      // ── Step 8: Guarantee at least 1 diagram always exists ────────────────
+      // If neither step 3 (intent diagrams) nor step 7 (fallback) fired a diagram,
+      // pick the most abstract non-slide-0 slide and force a diagram on it.
+      if (!diagramFetchFired) {
+        const abstractTypeOrder = ["explanation", "comparison", "fact", "example"];
+        const forceDiagramSlide = (rawSlides as any[])
+          .map((s: any, i: number) => ({ ...s, origIndex: i }))
+          .filter((s: any) =>
+            s.origIndex > 0 &&
+            s.origIndex !== stabilityFinalIdx &&
+            !NO_IMAGE_TYPES.includes(s.slideType ?? "")
+          )
+          .sort((a: any, b: any) => {
+            const ai = abstractTypeOrder.indexOf(a.slideType ?? "");
+            const bi = abstractTypeOrder.indexOf(b.slideType ?? "");
+            return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+          })[0] ?? null;
+
+        if (forceDiagramSlide) {
+          pendingDiagramIndices.add(forceDiagramSlide.origIndex);
+          setDiagramLoadingSlides((prev) => {
+            const next = new Set(prev);
+            next.add(forceDiagramSlide.origIndex);
+            return next;
+          });
+          fireDiagramFetch();
+        }
       }
 
       // ── Activity sheet (both mode) — fire in background ───────────────────
@@ -653,6 +765,40 @@ export default function Home() {
     if (!total) return "";
     return `${idx + 1} / ${total}`;
   }, [idx, total]);
+
+  // ── Slide-type-driven styling ─────────────────────────────────────────────
+  const slideType = current?.slideType ?? null;
+  const isNoImageSlide = slideType ? ["reflection","question","quiz","recap"].includes(slideType) : false;
+
+  const headerBg = "#166534";
+  const headerBorderBg = "#14532d";
+  const cardShadow = "8px 8px 0 #fbbf24";
+  const contentBg = "#ffffff";
+  const contentTextColor = "#111827";
+  const bulletAccentColor = "#166534";
+
+  const slideTypeLabels: Record<string, string> = {
+    reflection: "💭 Reflect",
+    question:   "❓ Question",
+    quiz:       "📝 Quiz",
+    recap:      "📋 Recap",
+    comparison: "⚖️ Compare",
+    fact:       "⭐ Fact",
+    example:    "💡 Example",
+    intro:      "📖 Intro",
+    explanation:"🔍 Explain",
+  };
+  const slideTypeLabel = slideType ? (slideTypeLabels[slideType] ?? null) : null;
+
+  // Comparison layout: split bullets/content into two halves
+  const compBullets = current?.bullets ?? [];
+  const compMid = Math.ceil(compBullets.length / 2);
+  const compLeftBullets = compBullets.slice(0, compMid);
+  const compRightBullets = compBullets.slice(compMid);
+  const compSentences = (current?.content ?? "").split(/(?<=[.!?]['"'"\u2018\u2019\u201c\u201d]?)\s+/).filter((s: string) => s.trim());
+  const compMidS = Math.ceil(compSentences.length / 2);
+  const compLeftContent = compSentences.slice(0, compMidS).join(" ");
+  const compRightContent = compSentences.slice(compMidS).join(" ");
 
   if (showLanding) {
     return (
@@ -1058,7 +1204,7 @@ export default function Home() {
                   style={{
                     background: "#ffffff",
                     border: "3px solid rgb(48, 47, 45)",
-                    boxShadow: "8px 8px 0 #fbbf24",
+                    boxShadow: cardShadow,
                   }}
                 >
                   <div
@@ -1075,8 +1221,8 @@ export default function Home() {
                       className="flex items-center shrink-0"
                       style={{
                         height: "15%",
-                        background: "#166534",
-                        borderBottom: "3px solid #14532d",
+                        background: headerBg,
+                        borderBottom: `3px solid ${headerBorderBg}`,
                       }}
                     >
                       <div
@@ -1094,6 +1240,14 @@ export default function Home() {
                         className="flex-1 px-4 text-base md:text-2xl font-black leading-tight bg-transparent border-0 outline-none min-w-0"
                         style={{ color: "#ffffff" }}
                       />
+                      {slideTypeLabel && (
+                        <span
+                          className="shrink-0 text-[10px] md:text-xs font-black px-2 py-0.5 rounded-lg mr-1 select-none"
+                          style={{ background: "rgba(255,255,255,0.2)", color: "#ffffff" }}
+                        >
+                          {slideTypeLabel}
+                        </span>
+                      )}
                       <span
                         className="shrink-0 pr-4 text-xs md:text-sm font-black px-2 py-0.5 rounded-lg mr-2"
                         style={{
@@ -1105,228 +1259,467 @@ export default function Home() {
                       </span>
                     </div>
 
-                    {/* Content row */}
-                    <div className="flex flex-1 min-h-0">
-                      {/* Text content */}
-                      <div
-                        className="flex-1 px-5 md:px-7 py-4 flex flex-col overflow-hidden items-center"
-                        style={{ background: "#ffffff" }}
-                      >
-                        {current?.content != null ? (
-                          /* Upper grades: editable paragraph */
-                          <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
-                            <textarea
-                              key={`content-${idx}`}
-                              defaultValue={current.content}
-                              onBlur={(e) => {
-                                const trimmed = e.target.value.trim();
-                                if (trimmed) patchSlide(idx, { content: trimmed });
-                              }}
-                              className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                              style={{ color: "#111827", fieldSizing: "content" as never }}
-                            />
-                          </div>
-                        ) : (
-                          /* Primary grades: bullet list */
-                          <div className="flex flex-col justify-center flex-1 overflow-y-auto">
-                            <ul className="space-y-1.5 md:space-y-3">
-                              {(current?.bullets || []).map((b, i) => (
-                                <li
-                                  key={`${idx}-${i}`}
-                                  className="flex items-start gap-2 md:gap-3"
-                                >
-                                  <span
-                                    className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
-                                    style={{ color: "#166534" }}
-                                  >
-                                    ▸
-                                  </span>
-                                  <textarea
-                                    defaultValue={b}
-                                    onBlur={(e) => {
-                                      const newBullets = [
-                                        ...(current?.bullets || []),
-                                      ];
-                                      const trimmed = e.target.value.trim();
-                                      if (trimmed) {
-                                        newBullets[i] = trimmed;
-                                      } else {
-                                        newBullets.splice(i, 1);
-                                      }
-                                      patchSlide(idx, { bullets: newBullets });
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") e.currentTarget.blur();
-                                    }}
-                                    rows={1}
-                                    className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
-                                    style={{ color: "#111827", fieldSizing: "content" as never }}
-                                  />
-                                </li>
-                              ))}
-                            </ul>
-                            <button
-                              onClick={() =>
-                                patchSlide(idx, {
-                                  bullets: [
-                                    ...(current?.bullets || []),
-                                    "New point",
-                                  ],
-                                })
-                              }
-                              className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
-                              style={{
-                                color: "#166534",
-                                border: "2px solid #166534",
-                              }}
-                            >
-                              + Add bullet
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Image column */}
-                      <div
-                        className={`${!pastedEntry && current?.imageSource === "diagram" ? "w-[62%]" : "w-[42%]"} p-2 md:p-3 flex flex-col`}
-                        style={{
-                          background: "#f8fafc",
-                          borderLeft: "3px solid #e2e8f0",
-                        }}
-                      >
-                        <div className="flex-1 flex items-center justify-center min-h-0">
-                          {displayImage ? (
-                            <div
-                              className="relative w-full h-full group cursor-pointer focus:outline-none"
-                              tabIndex={0}
-                              onPaste={(e) => handleImagePaste(e, idx)}
-                              title="Click here and paste to replace image (Ctrl+V)"
-                            >
-                              {!pastedEntry && current?.imageSource === "diagram" ? (
+                    {/* Content row — layout varies by slide type */}
+                    {slideType === "comparison" ? (
+                      /* ── COMPARISON: two-column split, image(s) inside columns ── */
+                      <div className="flex-1 flex flex-col min-h-0" style={{ background: contentBg }}>
+                        {/* If one image (no imageB): show it spanning full width between headers and text */}
+                        {!current?.imageB && (displayImage || imagesLoading || stabilityIdx === idx || diagramLoadingSlides.has(idx)) && (
+                          <div
+                            className="shrink-0 relative overflow-hidden"
+                            style={{ height: "38%", borderBottom: "3px solid #e2e8f0", background: "#f8fafc" }}
+                            tabIndex={0}
+                            onPaste={(e) => handleImagePaste(e, idx)}
+                          >
+                            {displayImage ? (
+                              !pastedEntry && current?.imageSource === "diagram" ? (
                                 <div
-                                  className="w-full h-full flex items-center justify-center overflow-hidden rounded-lg [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:max-h-full"
-                                  style={{ border: "2px solid #e2e8f0" }}
+                                  className="w-full h-full flex items-center justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-full overflow-hidden"
                                   dangerouslySetInnerHTML={{
                                     __html: styledDiagramSvg ?? (() => {
-                                      try {
-                                        const b64 = displayImage.split(",")[1];
-                                        return b64 ? atob(b64) : "";
-                                      } catch {
-                                        return "";
-                                      }
+                                      try { const b64 = displayImage.split(",")[1]; return b64 ? atob(b64) : ""; } catch { return ""; }
                                     })(),
                                   }}
                                 />
                               ) : (
-                                <img
-                                  src={displayImage}
-                                  alt={current?.imageAlt || ""}
-                                  className="w-full h-full object-contain rounded-lg"
-                                  style={{ border: "2px solid #e2e8f0" }}
-                                />
-                              )}
-                              <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
-                                <span
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-black px-2 py-1 rounded-lg"
-                                  style={{
-                                    color: "#ffffff",
-                                    background: "#166534",
-                                    border: "2px solid #e2e8f0",
-                                  }}
-                                >
-                                  Paste to replace (Ctrl+V)
+                                <img src={displayImage} alt={current?.imageAlt || ""} className="w-full h-full object-cover" />
+                              )
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center animate-pulse" style={{ background: "#f1f5f9" }}>
+                                <span className="text-[10px] md:text-xs font-black" style={{ color: "#94a3b8" }}>
+                                  {diagramLoadingSlides.has(idx) ? "Generating diagram…" : stabilityIdx === idx ? "Generating AI image…" : "Loading image…"}
                                 </span>
                               </div>
-                            </div>
-                          ) : imagesLoading || stabilityIdx === idx || diagramLoadingSlides.has(idx) ? (
+                            )}
+                            {imageCredit && (
+                              <div className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl" style={{ color: "#166534", background: "rgba(255,255,255,0.85)" }}>
+                                {imageCredit}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* Two-column comparison */}
+                        <div className="flex flex-1 min-h-0">
+                          {/* Side A */}
+                          <div className="flex-1 flex flex-col overflow-hidden" style={{ borderRight: "4px solid rgb(48,47,45)" }}>
                             <div
-                              className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
-                              style={{
-                                background: "#f1f5f9",
-                                border: "2px dashed #cbd5e1",
-                              }}
+                              className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
+                              style={{ background: "#166534", color: "#fff", borderBottom: "2px solid #14532d" }}
                             >
-                              <span
-                                className="text-[10px] md:text-xs font-black"
-                                style={{ color: "#94a3b8" }}
-                              >
-                                {diagramLoadingSlides.has(idx)
-                                  ? "Generating diagram…"
-                                  : stabilityIdx === idx
-                                  ? "Generating AI image…"
-                                  : "Loading image…"}
+                              ◀ Side A
+                            </div>
+                            {/* Side A image (only when imageB exists — two-image layout) */}
+                            {current?.imageB && displayImage && (
+                              <div className="shrink-0 relative overflow-hidden" style={{ height: "38%", borderBottom: "2px solid #e2e8f0" }}>
+                                <img src={displayImage} alt={current?.imageAlt || ""} className="w-full h-full object-cover" />
+                                {imageCredit && (
+                                  <div className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl" style={{ color: "#166534", background: "rgba(255,255,255,0.85)" }}>
+                                    {imageCredit}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <div className="flex-1 px-3 py-2 overflow-y-auto" style={{ background: "#f0fdf4" }}>
+                              {current?.content != null ? (
+                                <textarea
+                                  key={`comp-left-${idx}`}
+                                  defaultValue={compLeftContent}
+                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                  style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                />
+                              ) : (
+                                <ul className="space-y-1.5">
+                                  {compLeftBullets.map((b, i) => (
+                                    <li key={`${idx}-la-${i}`} className="flex items-start gap-2">
+                                      <span className="mt-1 shrink-0 font-black text-sm leading-none" style={{ color: bulletAccentColor }}>▸</span>
+                                      <textarea
+                                        defaultValue={b}
+                                        onBlur={(e) => {
+                                          const nb = [...(current?.bullets || [])];
+                                          const t = e.target.value.trim();
+                                          if (t) { nb[i] = t; } else { nb.splice(i, 1); }
+                                          patchSlide(idx, { bullets: nb });
+                                        }}
+                                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                        rows={1}
+                                        className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
+                                        style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                      />
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                          {/* Side B */}
+                          <div className="flex-1 flex flex-col overflow-hidden">
+                            <div
+                              className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
+                              style={{ background: "#14532d", color: "#fff", borderBottom: "2px solid #14532d" }}
+                            >
+                              Side B ▶
+                            </div>
+                            {/* Side B image (only when imageB exists — two-image layout) */}
+                            {current?.imageB && (
+                              <div className="shrink-0 relative overflow-hidden" style={{ height: "38%", borderBottom: "2px solid #e2e8f0" }}>
+                                <img src={current.imageB} alt={current?.imageAlt || ""} className="w-full h-full object-cover" />
+                                {current?.imageBCredit && (
+                                  <div className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl" style={{ color: "#166534", background: "rgba(255,255,255,0.85)" }}>
+                                    {current.imageBCredit}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <div className="flex-1 px-3 py-2 overflow-y-auto" style={{ background: "#ffffff" }}>
+                              {current?.content != null ? (
+                                <textarea
+                                  key={`comp-right-${idx}`}
+                                  defaultValue={compRightContent}
+                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                  style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                />
+                              ) : (
+                                <ul className="space-y-1.5">
+                                  {compRightBullets.map((b, i) => (
+                                    <li key={`${idx}-rb-${i}`} className="flex items-start gap-2">
+                                      <span className="mt-1 shrink-0 font-black text-sm leading-none" style={{ color: "#14532d" }}>▸</span>
+                                      <textarea
+                                        defaultValue={b}
+                                        onBlur={(e) => {
+                                          const nb = [...(current?.bullets || [])];
+                                          const actualIdx = compMid + i;
+                                          const t = e.target.value.trim();
+                                          if (t) { nb[actualIdx] = t; } else { nb.splice(actualIdx, 1); }
+                                          patchSlide(idx, { bullets: nb });
+                                        }}
+                                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                        rows={1}
+                                        className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
+                                        style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                      />
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : slideType === "fact" ? (
+                      /* ── FACT: image at top, text content below ─────────────── */
+                      <div className="flex-1 flex flex-col min-h-0" style={{ background: contentBg }}>
+                        {/* Image top */}
+                        <div
+                          className="shrink-0 relative overflow-hidden"
+                          style={{ height: "45%", borderBottom: "3px solid #e2e8f0", background: "#f8fafc" }}
+                          tabIndex={0}
+                          onPaste={(e) => handleImagePaste(e, idx)}
+                        >
+                          {displayImage ? (
+                            !pastedEntry && current?.imageSource === "diagram" ? (
+                              <div
+                                className="w-full h-full flex items-center justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-full overflow-hidden"
+                                dangerouslySetInnerHTML={{
+                                  __html: styledDiagramSvg ?? (() => {
+                                    try { const b64 = displayImage.split(",")[1]; return b64 ? atob(b64) : ""; } catch { return ""; }
+                                  })(),
+                                }}
+                              />
+                            ) : (
+                              <img src={displayImage} alt={current?.imageAlt || ""} className="w-full h-full object-cover" />
+                            )
+                          ) : imagesLoading || stabilityIdx === idx || diagramLoadingSlides.has(idx) ? (
+                            <div className="w-full h-full flex items-center justify-center animate-pulse" style={{ background: "#f1f5f9" }}>
+                              <span className="text-[10px] md:text-xs font-black" style={{ color: "#94a3b8" }}>
+                                {diagramLoadingSlides.has(idx) ? "Generating diagram…" : stabilityIdx === idx ? "Generating AI image…" : "Loading image…"}
                               </span>
                             </div>
                           ) : (
                             <div
-                              className="w-full h-full min-h-[80px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer focus:outline-none"
-                              style={{
-                                borderColor: "#d1d5db",
-                                background: "#f9fafb",
-                              }}
+                              className="w-full h-full flex flex-col items-center justify-center gap-1 cursor-pointer"
+                              style={{ background: "#f9fafb", border: "2px dashed #d1d5db" }}
                               tabIndex={0}
                               onPaste={(e) => handleImagePaste(e, idx)}
-                              title="Click here and paste an image (Ctrl+V)"
                             >
-                              <span className="text-2xl md:text-3xl select-none">
-                                💡
-                              </span>
-                              <span
-                                className="text-[10px] md:text-xs font-black"
-                                style={{ color: "#9ca3af" }}
+                              <span className="text-2xl select-none">💡</span>
+                              <span className="text-[10px] font-black" style={{ color: "#9ca3af" }}>Paste image here</span>
+                            </div>
+                          )}
+                          {imageCredit && (
+                            <div className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl" style={{ color: "#166534", background: "rgba(255,255,255,0.85)" }}>
+                              {imageCredit}
+                            </div>
+                          )}
+                        </div>
+                        {/* Text below */}
+                        <div className="flex-1 px-5 md:px-7 py-3 overflow-y-auto flex flex-col justify-center">
+                          {current?.content != null ? (
+                            <textarea
+                              key={`content-${idx}`}
+                              defaultValue={current.content}
+                              onBlur={(e) => { const t = e.target.value.trim(); if (t) patchSlide(idx, { content: t }); }}
+                              className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                              style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                            />
+                          ) : (
+                            <div className="flex flex-col">
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                                {(current?.bullets || []).map((b, i) => (
+                                  <div key={`${idx}-${i}`} className="flex items-start gap-1.5">
+                                    <span className="mt-1.5 shrink-0 font-black text-sm leading-none" style={{ color: bulletAccentColor }}>▸</span>
+                                    <textarea
+                                      defaultValue={b}
+                                      onBlur={(e) => {
+                                        const nb = [...(current?.bullets || [])];
+                                        const t = e.target.value.trim();
+                                        if (t) { nb[i] = t; } else { nb.splice(i, 1); }
+                                        patchSlide(idx, { bullets: nb });
+                                      }}
+                                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                      rows={1}
+                                      className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
+                                      style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                              <button
+                                onClick={() => patchSlide(idx, { bullets: [...(current?.bullets || []), "New point"] })}
+                                className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
+                                style={{ color: bulletAccentColor, border: `2px solid ${bulletAccentColor}` }}
                               >
-                                Paste image here
-                              </span>
+                                + Add bullet
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* ── STANDARD layout: text left, image sidebar right ─────── */
+                      <div className="flex flex-1 min-h-0">
+                        {/* Text content */}
+                        <div
+                          className={`${isNoImageSlide ? "w-full" : "flex-1"} px-5 md:px-7 py-4 flex flex-col overflow-hidden ${isNoImageSlide ? "items-center justify-center" : "items-center"}`}
+                          style={{ background: contentBg }}
+                        >
+                          {current?.content != null ? (
+                            /* Upper grades: editable paragraph */
+                            <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
+                              <textarea
+                                key={`content-${idx}`}
+                                defaultValue={current.content}
+                                onBlur={(e) => {
+                                  const trimmed = e.target.value.trim();
+                                  if (trimmed) patchSlide(idx, { content: trimmed });
+                                }}
+                                className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                                style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                              />
+                            </div>
+                          ) : (
+                            /* Primary grades: bullet list */
+                            <div className={`flex flex-col justify-center flex-1 overflow-y-auto ${isNoImageSlide ? "max-w-lg mx-auto w-full" : ""}`}>
+                              <ul className="space-y-1.5 md:space-y-3">
+                                {(current?.bullets || []).map((b, i) => (
+                                  <li
+                                    key={`${idx}-${i}`}
+                                    className="flex items-start gap-2 md:gap-3"
+                                  >
+                                    <span
+                                      className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
+                                      style={{ color: bulletAccentColor }}
+                                    >
+                                      ▸
+                                    </span>
+                                    <textarea
+                                      defaultValue={b}
+                                      onBlur={(e) => {
+                                        const newBullets = [
+                                          ...(current?.bullets || []),
+                                        ];
+                                        const trimmed = e.target.value.trim();
+                                        if (trimmed) {
+                                          newBullets[i] = trimmed;
+                                        } else {
+                                          newBullets.splice(i, 1);
+                                        }
+                                        patchSlide(idx, { bullets: newBullets });
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") e.currentTarget.blur();
+                                      }}
+                                      rows={1}
+                                      className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
+                                      style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                    />
+                                  </li>
+                                ))}
+                              </ul>
+                              <button
+                                onClick={() =>
+                                  patchSlide(idx, {
+                                    bullets: [
+                                      ...(current?.bullets || []),
+                                      "New point",
+                                    ],
+                                  })
+                                }
+                                className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
+                                style={{
+                                  color: bulletAccentColor,
+                                  border: `2px solid ${bulletAccentColor}`,
+                                }}
+                              >
+                                + Add bullet
+                              </button>
                             </div>
                           )}
                         </div>
 
-                        {pastedEntry ? (
-                          <input
-                            type="text"
-                            value={pastedEntry.credit}
-                            onChange={(e) =>
-                              setPastedImages((prev) => ({
-                                ...prev,
-                                [idx]: { ...prev[idx], credit: e.target.value },
-                              }))
-                            }
-                            className="mt-1 shrink-0 text-[9px] text-right w-full rounded px-1.5 py-0.5 focus:outline-none font-bold"
+                        {/* Image column — hidden for reflection/question/quiz/recap slides */}
+                        {!isNoImageSlide && (
+                          <div
+                            className={`${!pastedEntry && current?.imageSource === "diagram" ? "w-[62%]" : "w-[42%]"} p-2 md:p-3 flex flex-col`}
                             style={{
-                              background: "#ffffff",
-                              border: "2px solid #e2e8f0",
-                              color: "#166534",
+                              background: "#f8fafc",
+                              borderLeft: "3px solid #e2e8f0",
                             }}
-                          />
-                        ) : imageCredit ? (
-                          imageCreditUrl ? (
-                            <a
-                              href={imageCreditUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold block"
-                              style={{ color: "#166534" }}
-                            >
-                              {imageCredit}
-                            </a>
-                          ) : (
-                            <div
-                              className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold"
-                              style={{ color: "#166534" }}
-                            >
-                              {imageCredit}
+                          >
+                            <div className="flex-1 flex items-center justify-center min-h-0">
+                              {displayImage ? (
+                                <div
+                                  className="relative w-full h-full group cursor-pointer focus:outline-none"
+                                  tabIndex={0}
+                                  onPaste={(e) => handleImagePaste(e, idx)}
+                                  title="Click here and paste to replace image (Ctrl+V)"
+                                >
+                                  {!pastedEntry && current?.imageSource === "diagram" ? (
+                                    <div
+                                      className="w-full h-full flex items-center justify-center overflow-hidden rounded-lg [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:max-h-full"
+                                      style={{ border: "2px solid #e2e8f0" }}
+                                      dangerouslySetInnerHTML={{
+                                        __html: styledDiagramSvg ?? (() => {
+                                          try {
+                                            const b64 = displayImage.split(",")[1];
+                                            return b64 ? atob(b64) : "";
+                                          } catch {
+                                            return "";
+                                          }
+                                        })(),
+                                      }}
+                                    />
+                                  ) : (
+                                    <img
+                                      src={displayImage}
+                                      alt={current?.imageAlt || ""}
+                                      className="w-full h-full object-contain rounded-lg"
+                                      style={{ border: "2px solid #e2e8f0" }}
+                                    />
+                                  )}
+                                  <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
+                                    <span
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-black px-2 py-1 rounded-lg"
+                                      style={{
+                                        color: "#ffffff",
+                                        background: "#166534",
+                                        border: "2px solid #e2e8f0",
+                                      }}
+                                    >
+                                      Paste to replace (Ctrl+V)
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : imagesLoading || stabilityIdx === idx || diagramLoadingSlides.has(idx) ? (
+                                <div
+                                  className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
+                                  style={{
+                                    background: "#f1f5f9",
+                                    border: "2px dashed #cbd5e1",
+                                  }}
+                                >
+                                  <span
+                                    className="text-[10px] md:text-xs font-black"
+                                    style={{ color: "#94a3b8" }}
+                                  >
+                                    {diagramLoadingSlides.has(idx)
+                                      ? "Generating diagram…"
+                                      : stabilityIdx === idx
+                                      ? "Generating AI image…"
+                                      : "Loading image…"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div
+                                  className="w-full h-full min-h-[80px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer focus:outline-none"
+                                  style={{
+                                    borderColor: "#d1d5db",
+                                    background: "#f9fafb",
+                                  }}
+                                  tabIndex={0}
+                                  onPaste={(e) => handleImagePaste(e, idx)}
+                                  title="Click here and paste an image (Ctrl+V)"
+                                >
+                                  <span className="text-2xl md:text-3xl select-none">
+                                    💡
+                                  </span>
+                                  <span
+                                    className="text-[10px] md:text-xs font-black"
+                                    style={{ color: "#9ca3af" }}
+                                  >
+                                    Paste image here
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          )
-                        ) : null}
+
+                            {pastedEntry ? (
+                              <input
+                                type="text"
+                                value={pastedEntry.credit}
+                                onChange={(e) =>
+                                  setPastedImages((prev) => ({
+                                    ...prev,
+                                    [idx]: { ...prev[idx], credit: e.target.value },
+                                  }))
+                                }
+                                className="mt-1 shrink-0 text-[9px] text-right w-full rounded px-1.5 py-0.5 focus:outline-none font-bold"
+                                style={{
+                                  background: "#ffffff",
+                                  border: "2px solid #e2e8f0",
+                                  color: "#166534",
+                                }}
+                              />
+                            ) : imageCredit ? (
+                              imageCreditUrl ? (
+                                <a
+                                  href={imageCreditUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold block"
+                                  style={{ color: "#166534" }}
+                                >
+                                  {imageCredit}
+                                </a>
+                              ) : (
+                                <div
+                                  className="mt-1 shrink-0 text-[9px] text-right leading-tight px-1 truncate font-bold"
+                                  style={{ color: "#166534" }}
+                                >
+                                  {imageCredit}
+                                </div>
+                              )
+                            ) : null}
+                          </div>
+                        )}
                       </div>
-                    </div>
+                    )}
 
                     {/* Footer */}
                     <div
                       className="shrink-0 flex items-center justify-between px-5 py-1.5"
                       style={{
-                        borderTop: "3px solid #14532d",
-                        background: "#166534",
+                        borderTop: `3px solid ${headerBorderBg}`,
+                        background: headerBg,
                       }}
                     >
                       <span

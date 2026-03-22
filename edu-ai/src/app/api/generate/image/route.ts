@@ -2,13 +2,44 @@ import { NextResponse } from "next/server";
 import { searchPexels } from "@/lib/pexels";
 import { searchUnsplash } from "@/lib/unsplash";
 import { searchPixabay } from "@/lib/pixabay";
-import { chooseBestPhoto, PhotoCandidate } from "@/lib/image-match";
+import { chooseBestPhoto, isBlockedCandidate, PhotoCandidate } from "@/lib/image-match";
+import { openai } from "@/lib/openai";
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+async function semanticRank(
+  candidates: PhotoCandidate[],
+  conceptText: string
+): Promise<Array<{ candidate: PhotoCandidate; score: number }>> {
+  const filtered = candidates.filter((c) => !isBlockedCandidate(c));
+  if (filtered.length === 0) return [];
+
+  const texts = [conceptText, ...filtered.map((c) => `${c.alt} ${c.tags ?? ""}`.trim())];
+  const { data } = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
+  });
+  const queryVec = data[0].embedding;
+  return filtered.map((c, i) => ({
+    candidate: c,
+    score: cosineSimilarity(queryVec, data[i + 1].embedding),
+  }));
+}
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { imageQuery, title, bullets, minScore } = await req.json();
+    const { imageQuery, title, bullets, minScore, imageStrategy } = await req.json();
 
     if (!imageQuery || typeof imageQuery !== "string") {
       return NextResponse.json({ image: null });
@@ -82,14 +113,39 @@ export async function POST(req: Request) {
     }
 
     // ── Score and pick the best match ────────────────────────────────────────
-    const { photo, score } = chooseBestPhoto(candidates, safeTitle, safeBullets, imageQuery);
-
-    // Slide 0 uses minScore: 0 to always get something rather than falling back
-    // to Stability. All other slides require minScore ≥ 4 (≥ 2 word-boundary
-    // alt matches, or equivalent combination of alt + tag hits).
     const threshold = typeof minScore === "number" ? minScore : 2;
 
-    if (!photo || score < threshold) {
+    let photo: PhotoCandidate | null = null;
+
+    // Semantic scoring via embeddings — use a richer concept string for
+    // metaphor slides so embeddings match the described visual scene.
+    if (process.env.OPENAI_API_KEY && candidates.length > 0) {
+      try {
+        const conceptText = imageStrategy === "metaphor" && imageQuery
+          ? imageQuery  // imageQuery IS the visual scene description
+          : `${safeTitle} ${safeBullets.join(" ")} ${imageQuery ?? ""}`;
+
+        const ranked = await semanticRank(candidates, conceptText);
+        ranked.sort((a, b) => b.score - a.score);
+        const best = ranked[0];
+
+        // threshold === 0 means "always take best available" (slide 0 rule);
+        // otherwise require a meaningful semantic similarity (≥ 0.20).
+        const semanticMin = threshold === 0 ? -1 : 0.20;
+        if (best && best.score >= semanticMin) {
+          photo = best.candidate;
+        }
+      } catch {
+        // Embeddings failed — fall back to keyword scoring
+        const result = chooseBestPhoto(candidates, safeTitle, safeBullets, imageQuery);
+        if (result.photo && result.score >= threshold) photo = result.photo;
+      }
+    } else {
+      const result = chooseBestPhoto(candidates, safeTitle, safeBullets, imageQuery);
+      if (result.photo && result.score >= threshold) photo = result.photo;
+    }
+
+    if (!photo) {
       return NextResponse.json({ image: null });
     }
 

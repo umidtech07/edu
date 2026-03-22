@@ -26,7 +26,7 @@ const BLOCKED_TERMS = [
   "blogger", "influencer", "makeup", "beauty", "selfie",
 ];
 
-function isBlockedCandidate(candidate: PhotoCandidate): boolean {
+export function isBlockedCandidate(candidate: PhotoCandidate): boolean {
   const haystack = `${candidate.alt} ${candidate.tags ?? ""}`.toLowerCase();
   return BLOCKED_TERMS.some((term) => haystack.includes(term));
 }
