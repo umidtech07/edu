@@ -73,6 +73,13 @@ type Slide = {
   imageB?: string | null;
   imageBSource?: "pexels" | "unsplash" | "pixabay" | "stability" | "diagram" | null;
   imageBCredit?: string | null;
+  /** Comparison slide: distinct label and content for each side */
+  sideALabel?: string | null;
+  sideBLabel?: string | null;
+  sideABullets?: string[] | null;
+  sideBBullets?: string[] | null;
+  sideAContent?: string | null;
+  sideBContent?: string | null;
 };
 
 type Deck = {
@@ -159,6 +166,9 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [total]);
 
+  // Title-based fallback for detecting no-image slides when slideType is null/unrecognized
+  const NO_IMG_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review)\b/i;
+
   function applyFillRules(slides: Slide[]): Slide[] {
     const result = [...slides];
     const n = result.length;
@@ -167,7 +177,10 @@ export default function Home() {
     const lastTwoStart = Math.max(0, n - 2);
     const first = result[0];
 
-    const isNoImageType = (s: Slide) => s.slideType ? ["reflection","question","quiz","recap"].includes(s.slideType) : false;
+    const isNoImageType = (s: Slide) =>
+      s.slideType
+        ? ["reflection","question","quiz","recap"].includes(s.slideType)
+        : NO_IMG_TITLE_RE.test(s.title ?? "");
 
     // Rule 1: last 2 slides borrow first slide's image if imageless (skip video slides)
     if (first?.image) {
@@ -230,11 +243,26 @@ export default function Home() {
       }
     }
 
+    // Rule 3 (primary only): all remaining imageless non-quiz slides get slide 0's image
+    if (gradeLevel <= 4 && first?.image) {
+      for (let i = 1; i < n; i++) {
+        if (!isNoImageType(result[i]) && !result[i].image && !result[i].youtubeVideoId) {
+          result[i] = {
+            ...result[i],
+            image: first.image,
+            imageAlt: first.imageAlt,
+            imageSource: first.imageSource,
+            imageCredit: first.imageCredit,
+            imageCreditUrl: first.imageCreditUrl,
+          };
+        }
+      }
+    }
+
     // Absolute guard: quiz / true-false / reflection / question slides must never have images
-    const STRICT_NO_IMAGE = new Set(["reflection", "question", "quiz", "recap"]);
+    // Uses isNoImageType so null-slideType slides caught by title regex are also protected
     for (let i = 0; i < n; i++) {
-      const st = result[i].slideType;
-      if (st && STRICT_NO_IMAGE.has(st) && (result[i].image || result[i].youtubeVideoId)) {
+      if (isNoImageType(result[i]) && (result[i].image || result[i].youtubeVideoId)) {
         result[i] = {
           ...result[i],
           image: null,
@@ -330,12 +358,12 @@ export default function Home() {
       });
 
       if (!textRes.ok) throw new Error("Text generation failed");
-      const { deckTitle, slides: rawSlides, isPrimary } = await textRes.json();
+      const { deckTitle, slides: rawSlides } = await textRes.json();
 
       const initSlides: Slide[] = rawSlides.map((s: any) => ({
         title: s.title ?? "",
         bullets: s.bullets ?? [],
-        content: s.content ?? null,
+        content: s.content || null,
         image: null,
         imageAlt: "",
         imageSource: null,
@@ -345,6 +373,12 @@ export default function Home() {
         visualType: s.visualType ?? null,
         imageStrategy: s.imageStrategy ?? null,
         slideType: s.slideType ?? null,
+        sideALabel: s.sideALabel ?? null,
+        sideBLabel: s.sideBLabel ?? null,
+        sideABullets: s.sideABullets ?? null,
+        sideBBullets: s.sideBBullets ?? null,
+        sideAContent: s.sideAContent ?? null,
+        sideBContent: s.sideBContent ?? null,
       }));
 
       setDeck({ deckTitle, slides: initSlides });
@@ -367,6 +401,7 @@ export default function Home() {
         .filter(
           (s: any) => typeof s.imageQuery === "string" && s.imageQuery.trim()
             && !(s.slideType && ["reflection","question","quiz","recap"].includes(s.slideType))
+            && !NO_IMG_TITLE_RE.test(s.title ?? "")
         );
 
       // Rule 1: Slide 0 always gets a pexels/unsplash photo with general meaning.
@@ -390,82 +425,14 @@ export default function Home() {
         ];
       }
 
-      // Rule 3: Diagram slides at most 2 — exclude slide 0 (always photo)
-      const intentDiagramSlides = visualSlides.filter(
-        (s) => s.visualType === "diagram" && s.origIndex !== 0
-      );
-      // Rule 2: Photo slides — slide 0 always here; other slides follow their visualType
-      const photoSlides = visualSlides.filter(
-        (s) => s.origIndex === 0 || s.visualType !== "diagram"
-      );
-
-      // ── Step 3: Diagram slides — fire ONE shared call in background ─────
-      // Track state for sharing between step 3 and step 7
-      let diagramFetchFired = false;
-      let diagramFetchDone = false;
-      let diagramFetchResult: any = null;
-      const pendingDiagramIndices = new Set<number>();
-
-      function fireDiagramFetch() {
-        diagramFetchFired = true;
-        fetch("/api/generate/diagram", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            deckTitle,
-            slides: rawSlides.map((s: any) => ({
-              title: s.title,
-              bullets: s.bullets ?? [],
-              content: s.content ?? null,
-            })),
-          }),
-        })
-          .then((res) => (res.ok ? res.json() : { image: null }))
-          .then((data) => {
-            diagramFetchDone = true;
-            diagramFetchResult = data;
-            if (data.image) {
-              try {
-                const b64 = (data.image as string).split(",")[1] ?? "";
-                setSharedDiagramSvg(atob(b64));
-              } catch {}
-              setDeck((prev) => {
-                if (!prev?.slides) return prev;
-                const slides = [...prev.slides];
-                pendingDiagramIndices.forEach((i) => {
-                  slides[i] = {
-                    ...slides[i],
-                    image: data.image,
-                    imageSource: "diagram",
-                    imageAlt: data.imageAlt ?? "Diagram",
-                    imageCredit: data.imageCredit ?? "AI-generated diagram",
-                  };
-                });
-                return { ...prev, slides };
-              });
-            }
-          })
-          .catch(() => { diagramFetchDone = true; })
-          .finally(() =>
-            setDiagramLoadingSlides(new Set())
-          );
-      }
-
-      const cappedDiagramSlides = intentDiagramSlides.slice(0, 2);
-      if (cappedDiagramSlides.length > 0) {
-        cappedDiagramSlides.forEach((s) => pendingDiagramIndices.add(s.origIndex));
-        setDiagramLoadingSlides(new Set(cappedDiagramSlides.map((s) => s.origIndex)));
-        fireDiagramFetch();
-      }
+      // All visual slides use photo sources (Pexels/Stability); diagram generation is disabled.
+      const photoSlides = visualSlides;
 
       // ── Step 4: Pexels / Unsplash / Pixabay for photo slides ─────────────
-      // Run Pexels/Unsplash/Pixabay for all photo slides first.
-      // Primary mode: slide 0 only (keeps existing primary behavior).
-      // Non-primary: all photo slides try stock sources — the DALL-E slot is
-      // discovered *after* results arrive (first slide that got no stock photo).
-      const pexelTargets = isPrimary
-        ? photoSlides.slice(0, 1)
-        : photoSlides;
+      // Run Pexels/Unsplash/Pixabay for all photo slides first (primary + secondary).
+      // The Stability AI slot is discovered *after* results arrive based on which
+      // slide failed or is most abstract.
+      const pexelTargets = photoSlides;
 
       const pexelResults = await Promise.all(
         pexelTargets.map(async (slide) => {
@@ -505,17 +472,11 @@ export default function Home() {
       );
 
       // Determine Stability target now that stock photo results are known.
-      // Priority (non-primary): imageless+abstract slides (no imageQuery, not quiz/recap) →
+      // Priority (primary + secondary): imageless+abstract slides (no imageQuery, not quiz/recap) →
       //   metaphor-failed photo slide → abstract-type failed photo slide → any failed →
       //   imageless+abstract (force) → most abstract photo slide (force)
       let stabilityTargetIdx: number | null = null;
-      if (isPrimary) {
-        const nonFirstPhotoSlides = photoSlides.filter((s) => s.origIndex !== 0);
-        const reserved = nonFirstPhotoSlides.length > 0
-          ? nonFirstPhotoSlides[nonFirstPhotoSlides.length - 1]
-          : null;
-        stabilityTargetIdx = reserved?.origIndex ?? null;
-      } else {
+      {
         const abstractSlideTypes = new Set(["explanation", "comparison"]);
         const failedSlides = photoSlides.filter(
           (s) => s.origIndex > 0 && !pexelImageIndices.has(s.origIndex)
@@ -536,7 +497,8 @@ export default function Home() {
             .filter((s: any) =>
               s.origIndex > 0 &&
               !s.imageQuery &&
-              !NO_IMAGE_TYPES.includes(s.slideType ?? "")
+              !NO_IMAGE_TYPES.includes(s.slideType ?? "") &&
+              !NO_IMG_TITLE_RE.test(s.title ?? "")
             )
             .sort((a: any, b: any) => {
               const ai = abstractTypeOrder.indexOf(a.slideType ?? "");
@@ -563,10 +525,8 @@ export default function Home() {
       setImagesLoading(false); // Slides are ready — background tasks run below
 
       // ── Step 6: DALL-E 3 AI image (one photo slide that needs it) ─────────
-      let stabilityFinalIdx: number | null = null;
       if (stabilityTargetIdx !== null) {
         const stIdx = stabilityTargetIdx;
-        stabilityFinalIdx = stIdx;
         setStabilityIdx(stIdx);
         await fetch("/api/generate/stability", {
           method: "POST",
@@ -596,76 +556,7 @@ export default function Home() {
           });
       }
 
-      // ── Step 7: Diagram fallback for photo slides that got no image (skip slide 0) ─
-      const coveredByPhotos = new Set([
-        ...pexelImageIndices,
-        ...(stabilityFinalIdx !== null ? [stabilityFinalIdx] : []),
-      ]);
-      const diagramFallbackSlides = photoSlides
-        .filter((s) => s.origIndex > 0 && !coveredByPhotos.has(s.origIndex))
-        .slice(0, 2); // Cap at 2 diagram fallback slides
-
-      if (diagramFallbackSlides.length > 0) {
-        diagramFallbackSlides.forEach((s) => pendingDiagramIndices.add(s.origIndex));
-        setDiagramLoadingSlides((prev) => {
-          const next = new Set(prev);
-          diagramFallbackSlides.forEach((s) => next.add(s.origIndex));
-          return next;
-        });
-
-        if (!diagramFetchFired) {
-          // No call made yet in step 3 — fire it now
-          fireDiagramFetch();
-        } else if (diagramFetchDone && diagramFetchResult?.image) {
-          // Call already resolved — patch fallback slides immediately
-          const data = diagramFetchResult;
-          setDeck((prev) => {
-            if (!prev?.slides) return prev;
-            const slides = [...prev.slides];
-            diagramFallbackSlides.forEach((s) => {
-              slides[s.origIndex] = {
-                ...slides[s.origIndex],
-                image: data.image,
-                imageSource: "diagram",
-                imageAlt: data.imageAlt ?? "Diagram",
-                imageCredit: data.imageCredit ?? "AI-generated diagram",
-              };
-            });
-            return { ...prev, slides };
-          });
-          setDiagramLoadingSlides(new Set());
-        }
-        // else: call in-flight — pendingDiagramIndices already updated, will be patched on resolve
-      }
-
-      // ── Step 8: Guarantee at least 1 diagram always exists ────────────────
-      // If neither step 3 (intent diagrams) nor step 7 (fallback) fired a diagram,
-      // pick the most abstract non-slide-0 slide and force a diagram on it.
-      if (!diagramFetchFired) {
-        const abstractTypeOrder = ["explanation", "comparison", "fact", "example"];
-        const forceDiagramSlide = (rawSlides as any[])
-          .map((s: any, i: number) => ({ ...s, origIndex: i }))
-          .filter((s: any) =>
-            s.origIndex > 0 &&
-            s.origIndex !== stabilityFinalIdx &&
-            !NO_IMAGE_TYPES.includes(s.slideType ?? "")
-          )
-          .sort((a: any, b: any) => {
-            const ai = abstractTypeOrder.indexOf(a.slideType ?? "");
-            const bi = abstractTypeOrder.indexOf(b.slideType ?? "");
-            return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-          })[0] ?? null;
-
-        if (forceDiagramSlide) {
-          pendingDiagramIndices.add(forceDiagramSlide.origIndex);
-          setDiagramLoadingSlides((prev) => {
-            const next = new Set(prev);
-            next.add(forceDiagramSlide.origIndex);
-            return next;
-          });
-          fireDiagramFetch();
-        }
-      }
+      // Diagram generation is disabled; Steps 7 and 8 removed.
 
       // ── Activity sheet (both mode) — fire in background ───────────────────
       if (materialType === "both") {
@@ -768,6 +659,8 @@ export default function Home() {
 
   // ── Slide-type-driven styling ─────────────────────────────────────────────
   const slideType = current?.slideType ?? null;
+  // Defense-in-depth: if sideA/sideB fields are present, treat as comparison regardless of slideType
+  const isComparisonSlide = slideType === "comparison" || !!(current?.sideALabel || current?.sideAContent || current?.sideABullets);
   const isNoImageSlide = slideType ? ["reflection","question","quiz","recap"].includes(slideType) : false;
 
   const headerBg = "#166534";
@@ -788,17 +681,26 @@ export default function Home() {
     intro:      "📖 Intro",
     explanation:"🔍 Explain",
   };
-  const slideTypeLabel = slideType ? (slideTypeLabels[slideType] ?? null) : null;
+  const slideTypeLabel = isComparisonSlide ? "⚖️ Compare" : (slideType ? (slideTypeLabels[slideType] ?? null) : null);
 
-  // Comparison layout: split bullets/content into two halves
+  // Comparison layout: use sideA/sideB fields when present, else split bullets or content in half
   const compBullets = current?.bullets ?? [];
   const compMid = Math.ceil(compBullets.length / 2);
-  const compLeftBullets = compBullets.slice(0, compMid);
-  const compRightBullets = compBullets.slice(compMid);
-  const compSentences = (current?.content ?? "").split(/(?<=[.!?]['"'"\u2018\u2019\u201c\u201d]?)\s+/).filter((s: string) => s.trim());
-  const compMidS = Math.ceil(compSentences.length / 2);
-  const compLeftContent = compSentences.slice(0, compMidS).join(" ");
-  const compRightContent = compSentences.slice(compMidS).join(" ");
+  const compLeftBullets = current?.sideABullets?.length ? current.sideABullets : compBullets.slice(0, compMid);
+  const compRightBullets = current?.sideBBullets?.length ? current.sideBBullets : compBullets.slice(compMid);
+  // Final fallback: split content field in half when all sideA/B data is missing
+  const _compContentSentences = (current?.content ?? "").split(/(?<=[.!?])\s+/).filter(Boolean);
+  const _compContentMid = Math.ceil(_compContentSentences.length / 2);
+  const compLeftContent = current?.sideAContent
+    ?? (current?.sideABullets?.length ? current.sideABullets.join("\n") : null)
+    ?? (compLeftBullets.length > 0 ? compLeftBullets.join("\n") : null)
+    ?? _compContentSentences.slice(0, _compContentMid).join(" ")
+    ?? "";
+  const compRightContent = current?.sideBContent
+    ?? (current?.sideBBullets?.length ? current.sideBBullets.join("\n") : null)
+    ?? (compRightBullets.length > 0 ? compRightBullets.join("\n") : null)
+    ?? _compContentSentences.slice(_compContentMid).join(" ")
+    ?? "";
 
   if (showLanding) {
     return (
@@ -1260,7 +1162,7 @@ export default function Home() {
                     </div>
 
                     {/* Content row — layout varies by slide type */}
-                    {slideType === "comparison" ? (
+                    {isComparisonSlide ? (
                       /* ── COMPARISON: two-column split, image(s) inside columns ── */
                       <div className="flex-1 flex flex-col min-h-0" style={{ background: contentBg }}>
                         {/* If one image (no imageB): show it spanning full width between headers and text */}
@@ -1306,7 +1208,7 @@ export default function Home() {
                               className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
                               style={{ background: "#166534", color: "#fff", borderBottom: "2px solid #14532d" }}
                             >
-                              ◀ Side A
+                              ◀ {current?.sideALabel ?? "Side A"}
                             </div>
                             {/* Side A image (only when imageB exists — two-image layout) */}
                             {current?.imageB && displayImage && (
@@ -1320,35 +1222,13 @@ export default function Home() {
                               </div>
                             )}
                             <div className="flex-1 px-3 py-2 overflow-y-auto" style={{ background: "#f0fdf4" }}>
-                              {current?.content != null ? (
-                                <textarea
-                                  key={`comp-left-${idx}`}
-                                  defaultValue={compLeftContent}
-                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
-                                  style={{ color: contentTextColor, fieldSizing: "content" as never }}
-                                />
-                              ) : (
-                                <ul className="space-y-1.5">
-                                  {compLeftBullets.map((b, i) => (
-                                    <li key={`${idx}-la-${i}`} className="flex items-start gap-2">
-                                      <span className="mt-1 shrink-0 font-black text-sm leading-none" style={{ color: bulletAccentColor }}>▸</span>
-                                      <textarea
-                                        defaultValue={b}
-                                        onBlur={(e) => {
-                                          const nb = [...(current?.bullets || [])];
-                                          const t = e.target.value.trim();
-                                          if (t) { nb[i] = t; } else { nb.splice(i, 1); }
-                                          patchSlide(idx, { bullets: nb });
-                                        }}
-                                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                                        rows={1}
-                                        className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
-                                        style={{ color: contentTextColor, fieldSizing: "content" as never }}
-                                      />
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
+                              <textarea
+                                key={`comp-left-${idx}`}
+                                value={compLeftContent}
+                                onChange={(e) => patchSlide(idx, { sideAContent: e.target.value })}
+                                className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                              />
                             </div>
                           </div>
                           {/* Side B */}
@@ -1357,7 +1237,7 @@ export default function Home() {
                               className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
                               style={{ background: "#14532d", color: "#fff", borderBottom: "2px solid #14532d" }}
                             >
-                              Side B ▶
+                              {current?.sideBLabel ?? "Side B"} ▶
                             </div>
                             {/* Side B image (only when imageB exists — two-image layout) */}
                             {current?.imageB && (
@@ -1371,36 +1251,13 @@ export default function Home() {
                               </div>
                             )}
                             <div className="flex-1 px-3 py-2 overflow-y-auto" style={{ background: "#ffffff" }}>
-                              {current?.content != null ? (
-                                <textarea
-                                  key={`comp-right-${idx}`}
-                                  defaultValue={compRightContent}
-                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
-                                  style={{ color: contentTextColor, fieldSizing: "content" as never }}
-                                />
-                              ) : (
-                                <ul className="space-y-1.5">
-                                  {compRightBullets.map((b, i) => (
-                                    <li key={`${idx}-rb-${i}`} className="flex items-start gap-2">
-                                      <span className="mt-1 shrink-0 font-black text-sm leading-none" style={{ color: "#14532d" }}>▸</span>
-                                      <textarea
-                                        defaultValue={b}
-                                        onBlur={(e) => {
-                                          const nb = [...(current?.bullets || [])];
-                                          const actualIdx = compMid + i;
-                                          const t = e.target.value.trim();
-                                          if (t) { nb[actualIdx] = t; } else { nb.splice(actualIdx, 1); }
-                                          patchSlide(idx, { bullets: nb });
-                                        }}
-                                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                                        rows={1}
-                                        className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
-                                        style={{ color: contentTextColor, fieldSizing: "content" as never }}
-                                      />
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
+                              <textarea
+                                key={`comp-right-${idx}`}
+                                value={compRightContent}
+                                onChange={(e) => patchSlide(idx, { sideBContent: e.target.value })}
+                                className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                              />
                             </div>
                           </div>
                         </div>
@@ -1509,16 +1366,28 @@ export default function Home() {
                                 key={`content-${idx}`}
                                 defaultValue={current.content}
                                 onBlur={(e) => {
-                                  const trimmed = e.target.value.trim();
-                                  if (trimmed) patchSlide(idx, { content: trimmed });
+                                  patchSlide(idx, { content: e.target.value });
                                 }}
+                                placeholder="Type here…"
                                 className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                                style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                style={{ color: contentTextColor, fieldSizing: "content" as never, minHeight: "5rem" }}
                               />
                             </div>
                           ) : (
                             /* Primary grades: bullet list */
                             <div className={`flex flex-col justify-center flex-1 overflow-y-auto ${isNoImageSlide ? "max-w-lg mx-auto w-full" : ""}`}>
+                              {isNoImageSlide && (current?.bullets || []).length === 0 && (
+                                <textarea
+                                  key={`noimgplaceholder-${idx}`}
+                                  placeholder="Write your response here…"
+                                  className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                                  style={{ color: contentTextColor, minHeight: "5rem" }}
+                                  onBlur={(e) => {
+                                    const t = e.target.value.trim();
+                                    if (t) patchSlide(idx, { bullets: [t] });
+                                  }}
+                                />
+                              )}
                               <ul className="space-y-1.5 md:space-y-3">
                                 {(current?.bullets || []).map((b, i) => (
                                   <li

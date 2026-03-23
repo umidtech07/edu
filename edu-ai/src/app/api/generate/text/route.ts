@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   - "explanation" — teaches a key concept (can have an image)
   - "example" — concrete example or application (can have an image)
   - "fact" — surprising or interesting fact (can have an image)
-  - "comparison" — compares two things, sides, or viewpoints (can have an image)
+  - "comparison" — compares two things, sides, or viewpoints (can have an image); MUST include "sideALabel", "sideBLabel", and either "sideABullets"+"sideBBullets" (primary) or "sideAContent"+"sideBContent" (secondary) — each side describes a DIFFERENT thing/perspective
   - "reflection" — asks students to think or reflect — imageQuery MUST be null
   - "question" — open discussion prompt — imageQuery MUST be null
   - "quiz" — true/false or multiple choice — imageQuery MUST be null
@@ -81,7 +81,9 @@ Content rules:
 - Very simple and child-friendly language
 - Bullets: max 12 words each, 3–5 bullets per slide
 - 2–3 visual slides; rest have imageQuery: null, imageStrategy: null, and visualType: null
-- When imageQuery is null, imageStrategy and visualType must also be null${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`
+- When imageQuery is null, imageStrategy and visualType must also be null
+- EVERY slide MUST have a non-empty "bullets" array with 3–5 bullets — no exceptions, including quiz, reflection, question, and recap slides
+- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`
       : `Create a ${effectiveSlideCount}-slide lesson deck for upper-grade students (grades 5–8).
 
 Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
@@ -97,7 +99,9 @@ Content rules:
 - Use subject-specific vocabulary appropriate for the grade level
 - Include concrete examples, data, or evidence where relevant
 - 2–3 visual slides; quiz/reflection slides get imageQuery: null, imageStrategy: null, and visualType: null
-- When imageQuery is null, imageStrategy and visualType must also be null${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`;
+- When imageQuery is null, imageStrategy and visualType must also be null
+- EVERY slide MUST have a non-empty "content" field — no exceptions, including quiz, reflection, question, and recap slides
+- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (1–2 sentences about thing A), "sideBContent" (1–2 sentences about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
@@ -120,24 +124,72 @@ Content rules:
 
     const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","reflection","question","quiz","recap"];
     const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap"]);
-    // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false")
+    // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false", "Comparison")
     const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review)\b/i;
 
     const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
       .slice(0, effectiveSlideCount)
       .map((s: any) => {
-        const slideType = VALID_SLIDE_TYPES.includes(s.slideType) ? s.slideType : null;
+        // Normalize slideType: lowercase + trim so AI variants like "Comparison" still match
+        const rawType = typeof s.slideType === "string" ? s.slideType.toLowerCase().trim() : "";
+        let slideType: string | null = VALID_SLIDE_TYPES.includes(rawType) ? rawType : null;
+        // Fallback: if AI returned sideA/sideB fields but forgot slideType:"comparison", infer it
+        if (!slideType && (s.sideALabel || s.sideAContent || s.sideABullets || s.sideBContent || s.sideBBullets)) {
+          slideType = "comparison";
+        }
         const isNoImg = slideType
           ? NO_IMAGE_SLIDE_TYPES.has(slideType)
           : NO_IMAGE_TITLE_RE.test(s.title ?? "");
+        const isComparison = slideType === "comparison";
         return {
           title: s.title ?? "",
           ...(isPrimary
-            ? { bullets: Array.isArray(s.bullets) ? s.bullets : [] }
-            : { content: s.content ?? "" }),
-          imageQuery: isNoImg ? null : (s.imageQuery ?? null),
-          imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : null),
-          visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : null),
+            ? {
+                // Fallback: if AI omitted bullets but provided sideA/B (confused non-comparison slide), merge them
+                bullets: Array.isArray(s.bullets) && s.bullets.length > 0
+                  ? s.bullets
+                  : !isComparison && (Array.isArray(s.sideABullets) || Array.isArray(s.sideBBullets))
+                  ? [...(Array.isArray(s.sideABullets) ? s.sideABullets : []), ...(Array.isArray(s.sideBBullets) ? s.sideBBullets : [])]
+                  : typeof s.content === "string" && s.content.trim()
+                  ? s.content.split(/(?<=[.!?])\s+/).filter(Boolean)
+                  : [],
+              }
+            : {
+                // Fallback: if AI omitted content but provided sideA/B (confused non-comparison slide), join them
+                content: s.content || (!isComparison
+                  ? [s.sideAContent, s.sideBContent].filter(Boolean).join(" ") || null
+                  : null),
+              }),
+          ...(isComparison && {
+            sideALabel: s.sideALabel ?? null,
+            sideBLabel: s.sideBLabel ?? null,
+            ...(isPrimary
+              ? {
+                  sideABullets: Array.isArray(s.sideABullets) ? s.sideABullets : null,
+                  sideBBullets: Array.isArray(s.sideBBullets) ? s.sideBBullets : null,
+                }
+              : (() => {
+                  // Use explicit side fields when provided (truthy check — empty string is not valid content)
+                  if (s.sideAContent || s.sideBContent) {
+                    return { sideAContent: s.sideAContent || null, sideBContent: s.sideBContent || null };
+                  }
+                  // Fallback: AI returned bullets instead of side content — split them
+                  if (Array.isArray(s.sideABullets) && s.sideABullets.length > 0) {
+                    return { sideAContent: s.sideABullets.join(" "), sideBContent: Array.isArray(s.sideBBullets) ? s.sideBBullets.join(" ") : null };
+                  }
+                  // Fallback: split content field in half between the two sides
+                  const raw = (s.content ?? "").trim();
+                  if (raw) {
+                    const sentences = raw.split(/(?<=[.!?]['"'"\u2018\u2019\u201c\u201d]?)\s+/).filter((x: string) => x.trim());
+                    const mid = Math.ceil(sentences.length / 2);
+                    return { sideAContent: sentences.slice(0, mid).join(" ") || null, sideBContent: sentences.slice(mid).join(" ") || null };
+                  }
+                  return { sideAContent: null, sideBContent: null };
+                })()),
+          }),
+          imageQuery: isNoImg ? null : (s.imageQuery ?? (isComparison ? (s.title ?? null) : null)),
+          imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : (isComparison && !s.imageQuery ? "metaphor" : null)),
+          visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : (isComparison && !s.imageQuery ? "photo" : null)),
           slideType,
         };
       });
