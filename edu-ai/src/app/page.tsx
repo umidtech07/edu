@@ -966,6 +966,7 @@ export default function Home() {
                 >
                   {[
                     "Cambridge",
+                    "O'zbekiston MMTV",
                     "Pearson",
                     "IB (International Baccalaureate)",
                     "Common Core",

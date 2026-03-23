@@ -1,10 +1,14 @@
 export function buildDiagramPrompt(slideText: string): string {
   return [
     `Educational diagram illustration about: ${slideText}.`,
-    "Clean infographic style, clearly labeled diagram.",
+    "Clean infographic style.",
     "Flat design, bright colors, white background.",
     "Simple geometric shapes and arrows showing relationships.",
     "High quality, sharp, detailed.",
+    "No text.",
+    "No labels.",
+    "No letters.",
+    "No numbers.",
     "No watermark.",
   ]
     .filter(Boolean)

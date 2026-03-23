@@ -15,6 +15,7 @@ type StabilityArgs = {
   
     const form = new FormData();
     form.append("prompt", prompt);
+    form.append("negative_prompt", "text, letters, numbers, words, labels, captions, watermark, typography");
     form.append("aspect_ratio", aspectRatio);
     form.append("output_format", outputFormat);
   
