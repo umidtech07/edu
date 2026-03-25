@@ -198,8 +198,10 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [total]);
 
-  // Title-based fallback for detecting no-image slides when slideType is null/unrecognized
-  const NO_IMG_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review)\b/i;
+  // Title-based fallback for detecting no-image slides when slideType is null/unrecognized.
+  // Covers English, Uzbek Latin, Russian Cyrillic, and Uzbek Cyrillic equivalents of
+  // quiz / true-false / reflection / recap / review slide types.
+  const NO_IMG_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
 
   function applyFillRules(slides: Slide[]): Slide[] {
     const result = [...slides];
@@ -716,7 +718,7 @@ export default function Home() {
   const slideType = current?.slideType ?? null;
   // Defense-in-depth: if sideA/sideB fields are present, treat as comparison regardless of slideType
   const isComparisonSlide = slideType === "comparison" || !!(current?.sideALabel || current?.sideAContent || current?.sideABullets);
-  const isNoImageSlide = slideType ? ["reflection","question","quiz","recap"].includes(slideType) : false;
+  const isNoImageSlide = slideType ? ["reflection","question","quiz","recap"].includes(slideType) : NO_IMG_TITLE_RE.test(current?.title ?? "");
 
   const headerBg = "#166534";
   const headerBorderBg = "#14532d";

@@ -43,6 +43,18 @@ export async function POST(req: Request) {
       primaryMode || (!Number.isNaN(numericGrade) && numericGrade <= 4);
     const effectiveSlideCount = isPrimary ? 5 : slideCount;
 
+    // ── Language handling ──────────────────────────────────────────────────────
+    // "O'zbekiston MMTV" curriculum forces Uzbek/Russian output regardless of topic language.
+    // For all other curricula, OpenAI auto-detects the topic language and responds in kind.
+    // imageQuery is ALWAYS English so Pexels/Unsplash/Pixabay search works correctly.
+    const isUzbekCurriculum = curriculum.replace(/[''']/g, "'").includes("O'zbekiston");
+    const hasCyrillic = /[\u0400-\u04FF]/.test(topic);
+    const languageInstruction = isUzbekCurriculum
+      ? hasCyrillic
+        ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Russian.\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`
+        : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Uzbek (Latin script).\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`
+      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in that same language. If the topic is in English, respond in English.\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`;
+
     const visualTypeRule = `
 - "visualType": choose based on what best illustrates the slide:
   - "diagram" — labeled cross-sections (volcano, cell, heart), timelines, process/cycle flows (photosynthesis, water cycle), food chains, historical sequences, anatomy, maps, system diagrams
@@ -83,7 +95,7 @@ Content rules:
 - 2–3 visual slides; rest have imageQuery: null, imageStrategy: null, and visualType: null
 - When imageQuery is null, imageStrategy and visualType must also be null
 - EVERY slide MUST have a non-empty "bullets" array with 3–5 bullets — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`
+- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`
       : `Create a ${effectiveSlideCount}-slide lesson deck for upper-grade students (grades 5–8).
 
 Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
@@ -101,7 +113,7 @@ Content rules:
 - 2–3 visual slides; quiz/reflection slides get imageQuery: null, imageStrategy: null, and visualType: null
 - When imageQuery is null, imageStrategy and visualType must also be null
 - EVERY slide MUST have a non-empty "content" field — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (1–2 sentences about thing A), "sideBContent" (1–2 sentences about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}`;
+- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (1–2 sentences about thing A), "sideBContent" (1–2 sentences about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
@@ -125,7 +137,8 @@ Content rules:
     const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","reflection","question","quiz","recap"];
     const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap"]);
     // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false", "Comparison")
-    const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review)\b/i;
+    // Also covers Uzbek Latin and Russian/Uzbek Cyrillic equivalents when slideType is null.
+    const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
 
     const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
       .slice(0, effectiveSlideCount)

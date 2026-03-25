@@ -26,6 +26,11 @@ export async function POST(req: Request) {
 
     const isPrimary = Number(grade) <= 4;
 
+    const isUzbekCurriculum = curriculum.replace(/[''']/g, "'").includes("O'zbekiston");
+    const activityLanguageInstruction = isUzbekCurriculum
+      ? "\n- Generate ALL activity text (titles, statements, questions, options, answers) in Uzbek (Latin script). If the topic is in Russian (Cyrillic), use Russian instead.\n- The 'imageQueries' array MUST always be in English."
+      : "\n- Detect the language of the topic. Generate ALL activity text in that same language.\n- The 'imageQueries' array MUST always be in English.";
+
     const prompt = `Create a fun, engaging printable activity worksheet for Grade ${grade} students about: "${topic}"
 ${deckTitle ? `Lesson title: ${deckTitle}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
 
@@ -77,7 +82,7 @@ Rules:
 - imageQueries: 3 search phrases for topic-relevant small illustrations (e.g. "volcano eruption cartoon", "cell biology diagram")
 - Use ${isPrimary ? "simple, fun" : "clear, age-appropriate"} language for Grade ${grade}${curriculum ? ` (${curriculum})` : ""}
 - Vary question difficulty — mix easy and medium
-- All content must be factually correct`;
+- All content must be factually correct${activityLanguageInstruction}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
