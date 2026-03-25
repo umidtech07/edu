@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb, PDFName, PDFArray, PDFString, pushGrap
 import sharp from "sharp";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type Slide = {
   title: string;
