@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateStabilityImage } from "@/lib/stability";
 import { buildRealisticPrompt, isHistoricalTopic } from "@/lib/image-prompts";
-import { put } from "@vercel/blob";
 import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -62,29 +61,8 @@ export async function POST(req: Request) {
       historical,
     });
 
-    // Upload to Vercel Blob so the client stores a short URL instead of a
-    // multi-MB base64 data URI — avoids body-size limits on PDF export.
-    // Falls back to raw base64 if BLOB_READ_WRITE_TOKEN is not configured
-    // (e.g. local dev without a blob store).
-    let finalImage = image;
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      try {
-        const contentType = image.split(";")[0].replace("data:", "") || "image/png";
-        const ext = contentType.split("/")[1] ?? "png";
-        const base64 = image.split(",")[1] ?? "";
-        const buf = Buffer.from(base64, "base64");
-        const blob = await put(`stability-images/${Date.now()}.${ext}`, buf, {
-          access: "public",
-          contentType,
-        });
-        finalImage = blob.url;
-      } catch (blobErr) {
-        console.error("[Stability] Blob upload failed, falling back to base64:", blobErr);
-      }
-    }
-
     return NextResponse.json({
-      image: finalImage,
+      image,
       imageAlt: title ?? "",
       imageSource: "stability",
       imageCredit: "AI-generated image (Stability AI)",

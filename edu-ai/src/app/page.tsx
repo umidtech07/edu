@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getFirebaseAuth, googleProvider } from "@/lib/firebase";
+import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import type { User } from "firebase/auth";
+import { trackEvent } from "@/lib/track";
 
 function styleSvgForSlide(svgString: string, slide: { title: string; bullets?: string[]; content?: string | null }): string {
   if (typeof window === "undefined") return svgString;
@@ -109,6 +113,14 @@ async function compressDataUrl(dataUrl: string, maxDim = 1200, quality = 0.75): 
 
 export default function Home() {
   const [showLanding, setShowLanding] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+
+  useEffect(() => {
+    const authInstance = getFirebaseAuth();
+    if (!authInstance) return;
+    return onAuthStateChanged(authInstance, (u) => setUser(u));
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -345,6 +357,7 @@ export default function Home() {
 
   async function generateLesson() {
     if (!topic.trim()) return;
+    if (!user) { setShowLoginPrompt(true); return; }
 
     // Activity-only mode: just generate + download the sheet, skip slides
     if (materialType === "activity") {
@@ -545,6 +558,16 @@ export default function Home() {
       );
       setImagesLoading(false); // Slides are ready — background tasks run below
 
+      if (user) {
+        trackEvent(user, "deck_generated", {
+          topic,
+          grade: gradeLevel,
+          curriculum,
+          slideCount: rawSlides.length,
+          deckTitle,
+        });
+      }
+
       // ── Step 6: DALL-E 3 AI image (one photo slide that needs it) ─────────
       if (stabilityTargetIdx !== null) {
         const stIdx = stabilityTargetIdx;
@@ -642,6 +665,13 @@ export default function Home() {
       a.remove();
 
       window.URL.revokeObjectURL(url);
+
+      if (user) {
+        trackEvent(user, "pdf_exported", {
+          topic: deck.deckTitle,
+          slideCount: deck.slides?.length ?? 0,
+        });
+      }
     } finally {
       setDownloading(false);
     }
@@ -872,19 +902,62 @@ export default function Home() {
               </span>
             </div>
 
-            {total ? (
-              <div
-                className="text-sm font-black px-4 py-1.5 rounded-lg"
-                style={{
-                  background: "#ffffff",
-                  color: "#111827",
-                  border: "3px solid rgb(48, 47, 45)",
-                  boxShadow: "3px 3px 0 rgb(48, 47, 45)",
-                }}
-              >
-                {progressLabel}
-              </div>
-            ) : null}
+            <div className="flex items-center gap-3 flex-wrap">
+              {total ? (
+                <div
+                  className="text-sm font-black px-4 py-1.5 rounded-lg"
+                  style={{
+                    background: "#ffffff",
+                    color: "#111827",
+                    border: "3px solid rgb(48, 47, 45)",
+                    boxShadow: "3px 3px 0 rgb(48, 47, 45)",
+                  }}
+                >
+                  {progressLabel}
+                </div>
+              ) : null}
+
+              {user ? (
+                <div className="flex items-center gap-2">
+                  {user.photoURL && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={user.photoURL}
+                      alt={user.displayName ?? ""}
+                      className="w-8 h-8 rounded-full"
+                      style={{ border: "2px solid rgb(48,47,45)" }}
+                    />
+                  )}
+                  <button
+                    onClick={() => { const a = getFirebaseAuth(); if (a) signOut(a); }}
+                    className="text-xs font-black px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "#ffffff",
+                      color: "#374151",
+                      border: "2px solid rgb(48,47,45)",
+                      boxShadow: "2px 2px 0 rgb(48,47,45)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { const a = getFirebaseAuth(); if (a) signInWithPopup(a, googleProvider); }}
+                  className="text-sm font-black px-4 py-1.5 rounded-lg"
+                  style={{
+                    background: "#166534",
+                    color: "#ffffff",
+                    border: "3px solid #14532d",
+                    boxShadow: "3px 3px 0 rgb(48,47,45)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Sign in with Google
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ── Input panel ── */}
@@ -1672,6 +1745,56 @@ export default function Home() {
           <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
         </svg>
       </a>
+
+      {/* Login required modal */}
+      {showLoginPrompt && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={() => setShowLoginPrompt(false)}
+        >
+          <div
+            className="rounded-2xl p-8 flex flex-col items-center gap-4 max-w-sm w-full mx-4"
+            style={{
+              background: "#fff",
+              border: "3px solid #166534",
+              boxShadow: "6px 6px 0 rgb(48,47,45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-3xl">🔒</div>
+            <h2 className="text-xl font-black text-center" style={{ color: "#166534" }}>
+              Sign in to Generate
+            </h2>
+            <p className="text-sm font-bold text-center" style={{ color: "#6b7280" }}>
+              Sign in with Google to create your lesson slide deck.
+            </p>
+            <button
+              onClick={() => {
+                const a = getFirebaseAuth();
+                if (a) signInWithPopup(a, googleProvider).then(() => setShowLoginPrompt(false));
+              }}
+              className="w-full rounded-xl px-6 py-3 text-base font-black transition-all"
+              style={{
+                background: "#166534",
+                color: "#fff",
+                border: "3px solid #14532d",
+                boxShadow: "4px 4px 0 rgb(48,47,45)",
+                cursor: "pointer",
+              }}
+            >
+              Sign in with Google
+            </button>
+            <button
+              onClick={() => setShowLoginPrompt(false)}
+              className="text-sm font-bold"
+              style={{ color: "#9ca3af" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
