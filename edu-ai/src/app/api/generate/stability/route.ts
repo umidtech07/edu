@@ -78,8 +78,8 @@ export async function POST(req: Request) {
           contentType,
         });
         finalImage = blob.url;
-      } catch {
-        // fall back to base64 data URI
+      } catch (blobErr) {
+        console.error("[Stability] Blob upload failed, falling back to base64:", blobErr);
       }
     }
 
