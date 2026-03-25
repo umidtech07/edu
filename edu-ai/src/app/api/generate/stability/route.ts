@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { generateStabilityImage } from "@/lib/stability";
-import { buildRealisticPrompt } from "@/lib/image-prompts";
+import { buildRealisticPrompt, isHistoricalTopic } from "@/lib/image-prompts";
 import { put } from "@vercel/blob";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { title, bullets } = await req.json();
+    const { title, bullets, deckTitle } = await req.json();
 
     if (!process.env.STABILITY_API_KEY) {
       return NextResponse.json(
@@ -16,15 +16,20 @@ export async function POST(req: Request) {
       );
     }
 
+    const resolvedDeckTitle = deckTitle ?? "";
     const realisticPrompt = buildRealisticPrompt(
       title ?? "",
-      Array.isArray(bullets) ? bullets : []
+      Array.isArray(bullets) ? bullets : [],
+      resolvedDeckTitle
     );
+
+    const historical = isHistoricalTopic(resolvedDeckTitle) || isHistoricalTopic(title ?? "");
 
     const image = await generateStabilityImage({
       prompt: realisticPrompt,
       aspectRatio: "16:9",
       outputFormat: "png",
+      historical,
     });
 
     // Upload to Vercel Blob so the client stores a short URL instead of a

@@ -453,6 +453,7 @@ export default function Home() {
                   : [],
                 // imageStrategy guides semantic scoring: metaphor slides get richer scene-based queries
                 imageStrategy: slide.origIndex === 0 ? "literal" : slide.imageStrategy ?? null,
+                deckTitle,
                 // Slide 0 accepts any photo (minScore: 0)
                 ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
@@ -536,6 +537,7 @@ export default function Home() {
             bullets: rawSlides[stIdx].bullets,
             imageQuery: rawSlides[stIdx].imageQuery ?? null,
             imageStrategy: rawSlides[stIdx].imageStrategy ?? null,
+            deckTitle,
           }),
         })
           .then((res) => (res.ok ? res.json() : { image: null }))

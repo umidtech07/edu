@@ -2,20 +2,27 @@ type StabilityArgs = {
     prompt: string;
     aspectRatio?: "16:9" | "1:1" | "4:3" | "3:2";
     outputFormat?: "png" | "jpeg" | "webp";
+    historical?: boolean;
   };
-  
+
   export async function generateStabilityImage({
     prompt,
     aspectRatio = "16:9",
     outputFormat = "png",
+    historical = false,
   }: StabilityArgs): Promise<string> {
     if (!process.env.STABILITY_API_KEY) {
       throw new Error("Missing STABILITY_API_KEY");
     }
-  
+
+    const baseNegative = "text, letters, numbers, words, labels, captions, watermark, typography";
+    const historicalNegative = historical
+      ? ", modern, contemporary, classroom, computer, smartphone, tablet, television, car, electricity, internet, 20th century, 21st century"
+      : "";
+
     const form = new FormData();
     form.append("prompt", prompt);
-    form.append("negative_prompt", "text, letters, numbers, words, labels, captions, watermark, typography");
+    form.append("negative_prompt", baseNegative + historicalNegative);
     form.append("aspect_ratio", aspectRatio);
     form.append("output_format", outputFormat);
   

@@ -28,7 +28,7 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
     const base64 = url.split(",")[1] ?? "";
     return Buffer.from(base64, "base64");
   }
-  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error(`Failed to fetch image: ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
 }
@@ -63,22 +63,35 @@ function wrapText(text: string, maxChars: number) {
   return lines;
 }
 
+const EMBED_MAX_W = 1200;
+const EMBED_MAX_H = 800;
+
 async function loadAndEmbedImage(pdf: PDFDocument, imageUrl: string) {
-  let pngBytes: Uint8Array;
   if (imageUrl.startsWith("data:image/svg+xml")) {
+    // SVGs need PNG (preserves vectors/transparency)
     const svgBase64 = imageUrl.split(",")[1] ?? "";
     let svgBuf = Buffer.from(svgBase64, "base64");
+    let pngBytes: Uint8Array;
     try {
-      pngBytes = new Uint8Array(await sharp(svgBuf).png().toBuffer());
+      pngBytes = new Uint8Array(await sharp(svgBuf)
+        .resize({ width: EMBED_MAX_W, height: EMBED_MAX_H, fit: "inside", withoutEnlargement: true })
+        .png().toBuffer());
     } catch {
       const fixedSvg = svgBuf.toString("utf8").replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;");
-      pngBytes = new Uint8Array(await sharp(Buffer.from(fixedSvg, "utf8")).png().toBuffer());
+      pngBytes = new Uint8Array(await sharp(Buffer.from(fixedSvg, "utf8"))
+        .resize({ width: EMBED_MAX_W, height: EMBED_MAX_H, fit: "inside", withoutEnlargement: true })
+        .png().toBuffer());
     }
+    return pdf.embedPng(pngBytes);
   } else {
+    // Photos: resize + JPEG (5-10x smaller than PNG, much faster to embed)
     const raw = await fetchBytes(imageUrl);
-    pngBytes = new Uint8Array(await sharp(raw).png().toBuffer());
+    const jpgBytes = new Uint8Array(await sharp(raw)
+      .resize({ width: EMBED_MAX_W, height: EMBED_MAX_H, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer());
+    return pdf.embedJpg(jpgBytes);
   }
-  return pdf.embedPng(pngBytes);
 }
 
 /** Draw an image covering (filling) a rectangular area, clipped to the box bounds. */

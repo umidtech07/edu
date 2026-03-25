@@ -15,12 +15,38 @@ export function buildDiagramPrompt(slideText: string): string {
     .join(" ");
 }
 
-export function buildRealisticPrompt(title: string, bullets: string[]) {
+// Keywords that signal a historical/period topic
+const HISTORICAL_KEYWORDS = [
+  "ancient", "medieval", "century", "bc", "ad", "empire", "dynasty",
+  "war", "battle", "revolution", "historical", "history", "civilization",
+  "greek", "roman", "egyptian", "mesopotamian", "viking", "aztec", "inca",
+  "ottoman", "mongol", "renaissance", "industrial", "colonial", "world war",
+  "feudal", "prehistoric", "bronze age", "iron age", "middle ages",
+];
+
+export function isHistoricalTopic(text: string): boolean {
+  const lower = text.toLowerCase();
+  return HISTORICAL_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+export function buildRealisticPrompt(title: string, bullets: string[], deckTitle = "") {
   const mainConcept = bullets?.slice(0, 2).join(", ");
 
+  // Anchor the image to the full deck subject, not just the slide title
+  const subjectContext = deckTitle && deckTitle !== title
+    ? `${deckTitle} — ${title}`
+    : title;
+
+  // Suppress modern imagery when the topic is historical
+  const historical = isHistoricalTopic(deckTitle) || isHistoricalTopic(title);
+  const eraNote = historical
+    ? "Period-accurate setting, historical era, no modern objects, no contemporary clothing, no technology."
+    : "";
+
   return [
-    `Photorealistic educational image of ${title}.`,
+    `Photorealistic educational image of ${subjectContext}.`,
     mainConcept ? `Showing: ${mainConcept}.` : "",
+    eraNote,
     "High quality photograph.",
     "Sharp focus, natural lighting.",
     "Clean composition.",

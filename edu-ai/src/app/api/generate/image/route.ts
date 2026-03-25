@@ -4,6 +4,7 @@ import { searchUnsplash } from "@/lib/unsplash";
 import { searchPixabay } from "@/lib/pixabay";
 import { chooseBestPhoto, isBlockedCandidate, PhotoCandidate } from "@/lib/image-match";
 import { openai } from "@/lib/openai";
+import { isHistoricalTopic } from "@/lib/image-prompts";
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, normA = 0, normB = 0;
@@ -39,7 +40,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { imageQuery, title, bullets, minScore, imageStrategy } = await req.json();
+    const { imageQuery, title, bullets, minScore, imageStrategy, deckTitle } = await req.json();
 
     if (!imageQuery || typeof imageQuery !== "string") {
       return NextResponse.json({ image: null });
@@ -48,8 +49,12 @@ export async function POST(req: Request) {
     const safeTitle = title ?? "";
     const safeBullets: string[] = Array.isArray(bullets) ? bullets : [];
 
+    // For historical topics, add period modifiers so image APIs surface era-appropriate results
+    const historical = isHistoricalTopic(deckTitle ?? "") || isHistoricalTopic(safeTitle) || isHistoricalTopic(imageQuery);
+    const historicalSuffix = historical ? " historical vintage antique" : "";
+
     // Append "no people" so image APIs de-rank human-centric results
-    const safeQuery = `${imageQuery} no people`;
+    const safeQuery = `${imageQuery}${historicalSuffix} no people`;
 
     // ── Query all 3 sources in parallel; silently ignore missing keys / errors ──
     const [pexelsPhotos, unsplashPhotos, pixabayPhotos] = await Promise.all([
@@ -76,7 +81,6 @@ export async function POST(req: Request) {
     const candidates: PhotoCandidate[] = [
       ...pexelsPhotos.map((p) => ({
         url:
-          p.src.large2x ??
           p.src.large ??
           p.src.medium ??
           p.src.original ??
