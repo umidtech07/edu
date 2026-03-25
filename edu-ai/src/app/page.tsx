@@ -87,6 +87,26 @@ type Deck = {
   slides?: Slide[];
 };
 
+/** Compress a base64 data URI to JPEG at reduced size to keep export payloads small. */
+async function compressDataUrl(dataUrl: string, maxDim = 1200, quality = 0.75): Promise<string> {
+  if (!dataUrl.startsWith("data:")) return dataUrl; // URL — no action needed
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl); // fallback: send as-is
+    img.src = dataUrl;
+  });
+}
+
 export default function Home() {
   const [showLanding, setShowLanding] = useState(true);
 
@@ -577,18 +597,21 @@ export default function Home() {
     setDownloading(true);
 
     try {
-      const exportDeck = {
-        ...deck,
-        slides: deck.slides!.map((s, i) => {
+      const compressedSlides = await Promise.all(
+        deck.slides!.map(async (s, i) => {
           const pasted = pastedImages[i];
+          const rawImage = pasted?.dataUrl ?? s.image ?? null;
+          const rawImageB = s.imageB ?? null;
           return {
             ...s,
-            image: pasted?.dataUrl ?? s.image ?? null,
+            image: rawImage ? await compressDataUrl(rawImage) : null,
+            imageB: rawImageB ? await compressDataUrl(rawImageB) : null,
             imageCredit: pasted?.credit ?? s.imageCredit ?? null,
             imageSource: pasted ? null : s.imageSource,
           };
-        }),
-      };
+        })
+      );
+      const exportDeck = { ...deck, slides: compressedSlides };
 
       const res = await fetch(`/api/export/${kind}`, {
         method: "POST",
