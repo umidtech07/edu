@@ -4,6 +4,7 @@ import sharp from "sharp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+export const maxRequestBodySize = "50mb";
 
 type Slide = {
   title: string;

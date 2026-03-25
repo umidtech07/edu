@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+export const maxRequestBodySize = "50mb";
 
 type Slide = {
   title: string;
