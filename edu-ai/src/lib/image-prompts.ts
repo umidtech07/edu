@@ -44,12 +44,12 @@ export function buildRealisticPrompt(title: string, bullets: string[], deckTitle
     : "";
 
   return [
-    `Photorealistic educational image of ${subjectContext}.`,
-    mainConcept ? `Showing: ${mainConcept}.` : "",
+    `Close-up photorealistic educational photograph of ${subjectContext}.`,
+    mainConcept ? `Scene clearly shows: ${mainConcept}.` : "",
     eraNote,
-    "High quality photograph.",
-    "Sharp focus, natural lighting.",
-    "Clean composition.",
+    "Single focused subject, uncluttered background.",
+    "Sharp focus, natural lighting, high detail.",
+    "Professionally composed, wide establishing shot.",
     "No text.",
     "No labels.",
     "No watermark.",

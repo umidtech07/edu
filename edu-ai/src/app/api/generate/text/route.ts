@@ -4,16 +4,20 @@ import { openai } from "@/lib/openai";
 export const runtime = "nodejs";
 
 function safeJsonParse(text: string) {
-  try {
-    return JSON.parse(
-      text
-        .replace(/^```(?:json)?/i, "")
-        .replace(/```$/i, "")
-        .trim()
-    );
-  } catch {
-    return null;
+  const clean = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+  // Try direct parse first
+  try { return JSON.parse(clean); } catch { /* fall through */ }
+  // Extract first {...} block in case model added preamble/postamble
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(clean.slice(start, end + 1)); } catch { /* fall through */ }
   }
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -229,10 +233,17 @@ Content rules:
       /[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF]/.test(deckText) ||
       UZBEK_LATIN_RE.test(deckText);
 
+    let englishDeckTitle: string | null = null;
+
     if (isNonEnglish) {
-      const toTranslate = (slides as Array<Record<string, unknown>>)
-        .map((s, i) => ({ i, q: s.imageQuery }))
-        .filter(({ q }) => typeof q === "string" && (q as string).trim());
+      const deckTitleRaw = parsed.deckTitle ?? topic;
+      // Include the deckTitle at index 0 so slide 0's imageQuery is also correctly sourced
+      const toTranslate: Array<{ i: number | "deck"; q: string }> = [
+        { i: "deck", q: deckTitleRaw },
+        ...(slides as Array<Record<string, unknown>>)
+          .map((s, i) => ({ i, q: s.imageQuery as string }))
+          .filter(({ q }) => typeof q === "string" && (q as string).trim()),
+      ];
 
       if (toTranslate.length > 0) {
         try {
@@ -250,7 +261,11 @@ Content rules:
           if (Array.isArray(translated)) {
             toTranslate.forEach(({ i }, idx) => {
               if (typeof translated[idx] === "string" && translated[idx].trim()) {
-                (slides as Array<Record<string, unknown>>)[i].imageQuery = translated[idx].trim();
+                if (i === "deck") {
+                  englishDeckTitle = translated[idx].trim();
+                } else {
+                  (slides as Array<Record<string, unknown>>)[i as number].imageQuery = translated[idx].trim();
+                }
               }
             });
           }
@@ -262,6 +277,7 @@ Content rules:
 
     return NextResponse.json({
       deckTitle: parsed.deckTitle ?? topic,
+      englishDeckTitle,
       slides,
       isPrimary,
     });

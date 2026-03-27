@@ -15,7 +15,7 @@ type StabilityArgs = {
       throw new Error("Missing STABILITY_API_KEY");
     }
 
-    const baseNegative = "text, letters, numbers, words, labels, captions, watermark, typography";
+    const baseNegative = "text, letters, numbers, words, labels, captions, watermark, typography, blurry, distorted, deformed, extra limbs, mutated hands, bad anatomy, disfigured, low quality, ugly, duplicate, out of frame, cropped, worst quality, low resolution";
     const historicalNegative = historical
       ? ", modern, contemporary, classroom, computer, smartphone, tablet, television, car, electricity, internet, 20th century, 21st century"
       : "";
@@ -25,6 +25,7 @@ type StabilityArgs = {
     form.append("negative_prompt", baseNegative + historicalNegative);
     form.append("aspect_ratio", aspectRatio);
     form.append("output_format", outputFormat);
+    form.append("style_preset", "photographic");
   
     const res = await fetch(
       "https://api.stability.ai/v2beta/stable-image/generate/core",

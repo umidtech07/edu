@@ -4,13 +4,20 @@ import { openai } from "@/lib/openai";
 export const runtime = "nodejs";
 
 function safeJsonParse(text: string) {
-  try {
-    return JSON.parse(
-      text.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim()
-    );
-  } catch {
-    return null;
+  const clean = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+  // Try direct parse first
+  try { return JSON.parse(clean); } catch { /* fall through */ }
+  // Extract first {...} block in case model added preamble/postamble
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(clean.slice(start, end + 1)); } catch { /* fall through */ }
   }
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -97,7 +104,8 @@ Rules:
     const parsed = safeJsonParse(raw);
 
     if (!parsed?.activities) {
-      return NextResponse.json({ error: "Invalid response from OpenAI" }, { status: 500 });
+      console.error("Activity parse failed. Raw response:", raw.slice(0, 500));
+      return NextResponse.json({ error: "Invalid response from OpenAI", raw: raw.slice(0, 300) }, { status: 500 });
     }
 
     return NextResponse.json(parsed);
