@@ -489,15 +489,13 @@ export default function Home() {
                 // imageStrategy guides semantic scoring: metaphor slides get richer scene-based queries
                 imageStrategy: slide.origIndex === 0 ? "literal" : slide.imageStrategy ?? null,
                 deckTitle,
-                // Slide 0 accepts any photo (minScore: 0)
-                ...(slide.origIndex === 0 ? { minScore: 0 } : {}),
               }),
             });
             const data = res.ok ? await res.json() : { image: null };
             if (data.image) patchSlide(slide.origIndex, data);
-            return { index: slide.origIndex, hasImage: !!data.image };
+            return { index: slide.origIndex, hasImage: !!data.image, data: data.image ? data : null };
           } catch {
-            return { index: slide.origIndex, hasImage: false };
+            return { index: slide.origIndex, hasImage: false, data: null };
           }
         })
       );
@@ -507,12 +505,34 @@ export default function Home() {
         pexelResults.filter((r) => r.hasImage).map((r) => r.index)
       );
 
+      // If slide 0 got no image, borrow from the first other slide that did
+      if (!pexelImageIndices.has(0)) {
+        const donor = pexelResults.find((r) => r.index !== 0 && r.hasImage && r.data);
+        if (donor?.data) {
+          patchSlide(0, donor.data);
+          pexelImageIndices.add(0);
+        }
+      }
+
       // Determine Stability target now that stock photo results are known.
       // Priority (primary + secondary): imageless+abstract slides (no imageQuery, not quiz/recap) →
       //   metaphor-failed photo slide → abstract-type failed photo slide → any failed →
       //   imageless+abstract (force) → most abstract photo slide (force)
       let stabilityTargetIdx: number | null = null;
       {
+        // Priority 0: Imageless comparison slides — AI gave no imageQuery so Pexels
+        // was never going to help; route directly to Stability AI.
+        const imagelessComparison = (rawSlides as any[])
+          .map((s: any, i: number) => ({ ...s, origIndex: i }))
+          .find((s: any) =>
+            s.origIndex > 0 &&
+            !s.imageQuery &&
+            s.slideType === "comparison" &&
+            !NO_IMG_TITLE_RE.test(s.title ?? "")
+          ) ?? null;
+        if (imagelessComparison) {
+          stabilityTargetIdx = imagelessComparison.origIndex;
+        } else {
         const abstractSlideTypes = new Set(["explanation", "comparison"]);
         const failedSlides = photoSlides.filter(
           (s) => s.origIndex > 0 && !pexelImageIndices.has(s.origIndex)
@@ -552,6 +572,7 @@ export default function Home() {
             stabilityTargetIdx = (metaphorSlide ?? abstractPhotoSlide ?? nonFirstPhoto[nonFirstPhoto.length - 1])?.origIndex ?? null;
           }
         }
+        } // end else (no imageless comparison)
       }
 
       // Apply fill-rules after Pexels

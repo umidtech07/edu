@@ -125,9 +125,7 @@ export async function POST(req: Request) {
     // metaphor slides so embeddings match the described visual scene.
     if (process.env.OPENAI_API_KEY && candidates.length > 0) {
       try {
-        const conceptText = imageStrategy === "metaphor" && imageQuery
-          ? imageQuery  // imageQuery IS the visual scene description
-          : `${safeTitle} ${safeBullets.join(" ")} ${imageQuery ?? ""}`;
+        const conceptText = imageQuery;
 
         const ranked = await semanticRank(candidates, conceptText);
         ranked.sort((a, b) => b.score - a.score);

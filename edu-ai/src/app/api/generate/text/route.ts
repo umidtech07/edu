@@ -49,11 +49,12 @@ export async function POST(req: Request) {
     // imageQuery is ALWAYS English so Pexels/Unsplash/Pixabay search works correctly.
     const isUzbekCurriculum = curriculum.replace(/[''']/g, "'").includes("O'zbekiston");
     const hasCyrillic = /[\u0400-\u04FF]/.test(topic);
+    const imageQueryEnglishRule = `\n- CRITICAL: "imageQuery" is sent to English-language stock photo APIs. It MUST be written in English regardless of the topic language. Never write imageQuery in Uzbek, Russian, or any other language.\n  ✗ WRONG:   "imageQuery": "vulqon va tog' taqqoslash"\n  ✓ CORRECT: "imageQuery": "volcano mountain comparison"`;
     const languageInstruction = isUzbekCurriculum
       ? hasCyrillic
-        ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Russian.\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`
-        : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Uzbek (Latin script).\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`
-      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in that same language. If the topic is in English, respond in English.\n- The "imageQuery" and "slideType" fields MUST always be written in English — never translate them.`;
+        ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Russian.${imageQueryEnglishRule}`
+        : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Uzbek (Latin script).${imageQueryEnglishRule}`
+      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in that same language. If the topic is in English, respond in English.${imageQueryEnglishRule}`;
 
     const visualTypeRule = `
 - "visualType": choose based on what best illustrates the slide:
@@ -200,12 +201,64 @@ Content rules:
                   return { sideAContent: null, sideBContent: null };
                 })()),
           }),
-          imageQuery: isNoImg ? null : (s.imageQuery ?? (isComparison ? (s.title ?? null) : null)),
-          imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : (isComparison && !s.imageQuery ? "metaphor" : null)),
-          visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : (isComparison && !s.imageQuery ? "photo" : null)),
+          imageQuery: isNoImg ? null : (s.imageQuery ?? null),
+          imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : null),
+          visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : null),
           slideType,
         };
       });
+
+    // ── Guarantee English imageQuery ──────────────────────────────────────────
+    // Step 1: Clear any imageQuery the model wrote in Cyrillic script.
+    const CYRILLIC_RE = /[\u0400-\u04FF]/;
+    for (const s of slides as Array<Record<string, unknown>>) {
+      if (typeof s.imageQuery === "string" && CYRILLIC_RE.test(s.imageQuery)) {
+        s.imageQuery = null;
+        s.imageStrategy = null;
+        s.visualType = null;
+      }
+    }
+
+    // Step 2: If the deck appears non-English (Uzbek curriculum, Cyrillic/Arabic
+    // in titles, or Uzbek Latin special chars), batch-translate all remaining
+    // non-null imageQuery values to English in a single cheap call.
+    const UZBEK_LATIN_RE = /[\u02BB\u2018\u2019\u02BC]|[oO][\u02BB\u2018\u2019\u02BC']|[gG][\u02BB\u2018\u2019\u02BC']/;
+    const deckText = [parsed.deckTitle ?? "", ...slides.map((s: any) => s.title ?? "")].join(" ");
+    const isNonEnglish =
+      isUzbekCurriculum ||
+      /[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF]/.test(deckText) ||
+      UZBEK_LATIN_RE.test(deckText);
+
+    if (isNonEnglish) {
+      const toTranslate = (slides as Array<Record<string, unknown>>)
+        .map((s, i) => ({ i, q: s.imageQuery }))
+        .filter(({ q }) => typeof q === "string" && (q as string).trim());
+
+      if (toTranslate.length > 0) {
+        try {
+          const tx = await openai.chat.completions.create({
+            model: "gpt-4.1-nano",
+            temperature: 0,
+            messages: [
+              {
+                role: "user",
+                content: `Translate each item to a concise English stock photo search term (3–5 words). Return ONLY a JSON array of strings in the same order, no extra text.\n${JSON.stringify(toTranslate.map((x) => x.q))}`,
+              },
+            ],
+          });
+          const translated = safeJsonParse(tx.choices[0]?.message?.content ?? "");
+          if (Array.isArray(translated)) {
+            toTranslate.forEach(({ i }, idx) => {
+              if (typeof translated[idx] === "string" && translated[idx].trim()) {
+                (slides as Array<Record<string, unknown>>)[i].imageQuery = translated[idx].trim();
+              }
+            });
+          }
+        } catch {
+          // Translation failed — leave imageQuery as-is; Pexels may still find something
+        }
+      }
+    }
 
     return NextResponse.json({
       deckTitle: parsed.deckTitle ?? topic,

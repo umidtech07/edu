@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { PDFDocument, StandardFonts, rgb, PDFName, PDFArray, PDFString, pushGraphicsState, popGraphicsState, moveTo, lineTo, closePath, clip, endPath } from "pdf-lib";
+import { PDFDocument, rgb, PDFName, PDFArray, PDFString, pushGraphicsState, popGraphicsState, moveTo, lineTo, closePath, clip, endPath } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import sharp from "sharp";
+import fs from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -34,7 +37,7 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await r.arrayBuffer());
 }
 
-/** Replace characters outside WinAnsi range so pdf-lib Helvetica doesn't throw. */
+/** Normalize punctuation to plain equivalents. Noto Sans covers Cyrillic/Latin so we no longer strip non-Latin chars. */
 function sanitize(text: string): string {
   return text
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")   // curly single quotes
@@ -42,9 +45,8 @@ function sanitize(text: string): string {
     .replace(/\u2013/g, "-")                        // en dash
     .replace(/\u2014/g, "--")                       // em dash
     .replace(/\u2026/g, "...")                      // ellipsis
-    .replace(/\u2022/g, "*")                        // bullet
-    .replace(/\u00A0/g, " ")                        // non-breaking space
-    .replace(/[^\x00-\xFF]/g, "?");                 // any remaining non-latin
+    .replace(/\u2022/g, "\u2022")                   // keep bullet as-is (Noto supports it)
+    .replace(/\u00A0/g, " ");                       // non-breaking space → regular space
 }
 
 function wrapText(text: string, maxChars: number) {
@@ -149,8 +151,12 @@ export async function POST(req: Request) {
     const HEADER_H = 80;
 
     const pdf = await PDFDocument.create();
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
-    const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    pdf.registerFontkit(fontkit);
+    const fontsDir = path.join(process.cwd(), "public", "fonts");
+    const fontBytes = fs.readFileSync(path.join(fontsDir, "NotoSans-Regular.ttf"));
+    const fontBoldBytes = fs.readFileSync(path.join(fontsDir, "NotoSans-Bold.ttf"));
+    const font = await pdf.embedFont(fontBytes);
+    const fontBold = await pdf.embedFont(fontBoldBytes);
 
     // ── Title page ────────────────────────────────────────────────
     {
