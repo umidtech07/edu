@@ -92,6 +92,7 @@ type Slide = {
     | "example"
     | "fact"
     | "comparison"
+    | "columns"
     | "reflection"
     | "question"
     | "quiz"
@@ -114,6 +115,16 @@ type Slide = {
   sideBBullets?: string[] | null;
   sideAContent?: string | null;
   sideBContent?: string | null;
+  /** Columns slide: visual card grid */
+  columns?: Array<{
+    label: string;
+    description: string;
+    imageQuery?: string | null;
+    image?: string | null;
+    imageAlt?: string;
+    imageSource?: "pexels" | "unsplash" | "pixabay" | "stability" | null;
+    imageCredit?: string | null;
+  }> | null;
 };
 
 type Deck = {
@@ -172,7 +183,8 @@ export default function Home() {
   const [deck, setDeck] = useState<Deck | null>(null);
   const [loading, setLoading] = useState(false);
   const [imagesLoading, setImagesLoading] = useState(false);
-  const [stabilityIdx, setStabilityIdx] = useState<number | null>(null);
+  const [stabilitySlides, setStabilitySlides] = useState<Set<number>>(new Set());
+  const [stabilityColKeys, setStabilityColKeys] = useState<Set<string>>(new Set());
   const [diagramLoadingSlides, setDiagramLoadingSlides] = useState<Set<number>>(
     new Set()
   );
@@ -458,7 +470,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic,
-          slideCount: 8,
+          slideCount: 10,
           grade: gradeLevel,
           primaryMode: gradeLevel <= 4,
           curriculum,
@@ -489,6 +501,15 @@ export default function Home() {
         sideBBullets: s.sideBBullets ?? null,
         sideAContent: s.sideAContent ?? null,
         sideBContent: s.sideBContent ?? null,
+        columns: Array.isArray(s.columns) ? s.columns.map((c: any) => ({
+          label: c.label ?? "",
+          description: c.description ?? "",
+          imageQuery: c.imageQuery ?? null,
+          image: null,
+          imageAlt: "",
+          imageSource: null,
+          imageCredit: null,
+        })) : null,
       }));
 
       setDeck({ deckTitle, slides: initSlides });
@@ -514,7 +535,7 @@ export default function Home() {
             s.imageQuery.trim() &&
             !(
               s.slideType &&
-              ["reflection", "question", "quiz", "recap"].includes(s.slideType)
+              ["reflection", "question", "quiz", "recap", "columns"].includes(s.slideType)
             ) &&
             !NO_IMG_TITLE_RE.test(s.title ?? "")
         );
@@ -522,7 +543,7 @@ export default function Home() {
       // Rule 1: Slide 0 always gets a pexels/unsplash photo with general meaning.
       // If the AI gave slide 0 a diagram visualType or no imageQuery, inject it as a photo slide.
       // Skip if slide 0 is a no-image type (quiz, reflection, question, recap).
-      const NO_IMAGE_TYPES = ["reflection", "question", "quiz", "recap"];
+      const NO_IMAGE_TYPES = ["reflection", "question", "quiz", "recap", "columns"];
       const slide0IsNoImageType =
         rawSlides[0]?.slideType &&
         NO_IMAGE_TYPES.includes(rawSlides[0].slideType);
@@ -591,6 +612,98 @@ export default function Home() {
         })
       );
 
+      // ── Step 4b: Fetch images for each column in "columns" slides ────────────
+      const columnsSlides = rawSlides
+        .map((s: any, i: number) => ({ ...s, origIndex: i }))
+        .filter((s: any) => s.slideType === "columns" && Array.isArray(s.columns) && s.columns.length > 0);
+
+      await Promise.all(
+        columnsSlides.map(async (slide: any) => {
+          const colImages = await Promise.all(
+            (slide.columns as any[]).map(async (col: any) => {
+              if (!col.imageQuery) return { image: null };
+              try {
+                const res = await fetch("/api/generate/image", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    imageQuery: col.imageQuery,
+                    title: col.label ?? "",
+                    bullets: col.description ? [col.description] : [],
+                    deckTitle,
+                  }),
+                });
+                return res.ok ? await res.json() : { image: null };
+              } catch {
+                return { image: null };
+              }
+            })
+          );
+          // Patch Pexels results immediately
+          setDeck((prev) => {
+            if (!prev?.slides) return prev;
+            const slides = [...prev.slides];
+            const s = { ...slides[slide.origIndex] };
+            if (Array.isArray(s.columns)) {
+              s.columns = s.columns.map((col, ci) => ({
+                ...col,
+                image: colImages[ci]?.image ?? null,
+                imageAlt: colImages[ci]?.imageAlt ?? "",
+                imageSource: colImages[ci]?.imageSource ?? null,
+                imageCredit: colImages[ci]?.imageCredit ?? null,
+              }));
+            }
+            slides[slide.origIndex] = s;
+            return { ...prev, slides };
+          });
+
+          // Stability fallback for any column that got no Pexels image
+          await Promise.all(
+            (slide.columns as any[]).map(async (col: any, ci: number) => {
+              if (colImages[ci]?.image) return; // already has an image
+              const colKey = `${slide.origIndex}:${ci}`;
+              setStabilityColKeys((prev) => new Set([...prev, colKey]));
+              try {
+                const res = await fetch("/api/generate/stability", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    title: col.label ?? "",
+                    bullets: col.description ? [col.description] : [],
+                    deckTitle,
+                  }),
+                });
+                const data = res.ok ? await res.json() : { image: null };
+                if (data.image) {
+                  setDeck((prev) => {
+                    if (!prev?.slides) return prev;
+                    const slides = [...prev.slides];
+                    const s = { ...slides[slide.origIndex] };
+                    if (Array.isArray(s.columns)) {
+                      s.columns = s.columns.map((c, i) =>
+                        i === ci
+                          ? { ...c, image: data.image, imageAlt: data.imageAlt ?? "", imageSource: data.imageSource ?? null, imageCredit: data.imageCredit ?? null }
+                          : c
+                      );
+                    }
+                    slides[slide.origIndex] = s;
+                    return { ...prev, slides };
+                  });
+                }
+              } catch {
+                // ignore — column stays imageless
+              } finally {
+                setStabilityColKeys((prev) => {
+                  const next = new Set(prev);
+                  next.delete(colKey);
+                  return next;
+                });
+              }
+            })
+          );
+        })
+      );
+
       // ── Step 5: Note which slides got real photos ──────────────────────────
       const pexelImageIndices = new Set(
         pexelResults.filter((r) => r.hasImage).map((r) => r.index)
@@ -605,89 +718,6 @@ export default function Home() {
           patchSlide(0, donor.data);
           pexelImageIndices.add(0);
         }
-      }
-
-      // Determine Stability target now that stock photo results are known.
-      // Priority (primary + secondary): imageless+abstract slides (no imageQuery, not quiz/recap) →
-      //   metaphor-failed photo slide → abstract-type failed photo slide → any failed →
-      //   imageless+abstract (force) → most abstract photo slide (force)
-      let stabilityTargetIdx: number | null = null;
-      {
-        // Priority 0: Imageless comparison slides — AI gave no imageQuery so Pexels
-        // was never going to help; route directly to Stability AI.
-        const imagelessComparison =
-          (rawSlides as any[])
-            .map((s: any, i: number) => ({ ...s, origIndex: i }))
-            .find(
-              (s: any) =>
-                s.origIndex > 0 &&
-                !s.imageQuery &&
-                s.slideType === "comparison" &&
-                !NO_IMG_TITLE_RE.test(s.title ?? "")
-            ) ?? null;
-        if (imagelessComparison) {
-          stabilityTargetIdx = imagelessComparison.origIndex;
-        } else {
-          const abstractSlideTypes = new Set(["explanation", "comparison"]);
-          const failedSlides = photoSlides.filter(
-            (s) => s.origIndex > 0 && !pexelImageIndices.has(s.origIndex)
-          );
-          // Among failed: prefer metaphor → explanation/comparison type → any
-          const metaphorFailed = failedSlides.find(
-            (s) => s.imageStrategy === "metaphor"
-          );
-          const abstractFailed = failedSlides.find((s) =>
-            abstractSlideTypes.has(s.slideType ?? "")
-          );
-          const anyFailed = metaphorFailed ?? abstractFailed ?? failedSlides[0];
-
-          if (anyFailed) {
-            stabilityTargetIdx = anyFailed.origIndex;
-          } else {
-            // All photo slides got stock images — prefer truly imageless+abstract slides first:
-            // slides the AI gave no imageQuery (deep-thinking content, not quiz/recap)
-            const abstractTypeOrder = [
-              "explanation",
-              "comparison",
-              "fact",
-              "example",
-            ];
-            const imagelessAbstract =
-              (rawSlides as any[])
-                .map((s: any, i: number) => ({ ...s, origIndex: i }))
-                .filter(
-                  (s: any) =>
-                    s.origIndex > 0 &&
-                    !s.imageQuery &&
-                    !NO_IMAGE_TYPES.includes(s.slideType ?? "") &&
-                    !NO_IMG_TITLE_RE.test(s.title ?? "")
-                )
-                .sort((a: any, b: any) => {
-                  const ai = abstractTypeOrder.indexOf(a.slideType ?? "");
-                  const bi = abstractTypeOrder.indexOf(b.slideType ?? "");
-                  return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-                })[0] ?? null;
-
-            if (imagelessAbstract) {
-              stabilityTargetIdx = imagelessAbstract.origIndex;
-            } else {
-              // Force on most abstract photo slide
-              const nonFirstPhoto = photoSlides.filter((s) => s.origIndex > 0);
-              const metaphorSlide = nonFirstPhoto.find(
-                (s) => s.imageStrategy === "metaphor"
-              );
-              const abstractPhotoSlide = nonFirstPhoto.find((s) =>
-                abstractSlideTypes.has(s.slideType ?? "")
-              );
-              stabilityTargetIdx =
-                (
-                  metaphorSlide ??
-                  abstractPhotoSlide ??
-                  nonFirstPhoto[nonFirstPhoto.length - 1]
-                )?.origIndex ?? null;
-            }
-          }
-        } // end else (no imageless comparison)
       }
 
       // Apply fill-rules after Pexels
@@ -706,37 +736,57 @@ export default function Home() {
         });
       }
 
-      // ── Step 6: DALL-E 3 AI image (one photo slide that needs it) ─────────
-      if (stabilityTargetIdx !== null) {
-        const stIdx = stabilityTargetIdx;
-        setStabilityIdx(stIdx);
-        await fetch("/api/generate/stability", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: rawSlides[stIdx].title,
-            bullets: rawSlides[stIdx].bullets,
-            imageQuery: rawSlides[stIdx].imageQuery ?? null,
-            imageStrategy: rawSlides[stIdx].imageStrategy ?? null,
-            deckTitle,
-          }),
-        })
-          .then((res) => (res.ok ? res.json() : { image: null }))
-          .then((data) => {
-            setStabilityIdx(null);
-            if (data.image) {
-              setDeck((prev) => {
-                if (!prev?.slides) return prev;
-                const slides = [...prev.slides];
-                slides[stIdx] = { ...slides[stIdx], ...data };
-                return { ...prev, slides: applyFillRules(slides) };
-              });
-            }
-          })
-          .catch((e) => {
-            setStabilityIdx(null);
-            console.error("Stability error:", e);
-          });
+      // ── Step 6: Stability AI for ALL imageless non-exception slides ──────────
+      // Every slide that didn't get a Pexels image (and isn't quiz/reflection/question/recap/columns)
+      // gets its own unique AI-generated image.
+      {
+        const imagelessTargets = (rawSlides as any[])
+          .map((s: any, i: number) => ({ ...s, origIndex: i }))
+          .filter(
+            (s: any) =>
+              !NO_IMAGE_TYPES.includes(s.slideType ?? "") &&
+              !NO_IMG_TITLE_RE.test(s.title ?? "") &&
+              !pexelImageIndices.has(s.origIndex)
+          );
+
+        if (imagelessTargets.length > 0) {
+          setStabilitySlides(new Set(imagelessTargets.map((s: any) => s.origIndex as number)));
+          await Promise.all(
+            imagelessTargets.map(async (s: any) => {
+              const stIdx = s.origIndex as number;
+              try {
+                const res = await fetch("/api/generate/stability", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    title: s.title,
+                    bullets: s.bullets,
+                    imageQuery: s.imageQuery ?? null,
+                    imageStrategy: s.imageStrategy ?? null,
+                    deckTitle,
+                  }),
+                });
+                const data = res.ok ? await res.json() : { image: null };
+                if (data.image) {
+                  setDeck((prev) => {
+                    if (!prev?.slides) return prev;
+                    const slides = [...prev.slides];
+                    slides[stIdx] = { ...slides[stIdx], ...data };
+                    return { ...prev, slides: applyFillRules(slides) };
+                  });
+                }
+              } catch (e) {
+                console.error("Stability error:", e);
+              } finally {
+                setStabilitySlides((prev) => {
+                  const next = new Set(prev);
+                  next.delete(stIdx);
+                  return next;
+                });
+              }
+            })
+          );
+        }
       }
 
       // Diagram generation is disabled; Steps 7 and 8 removed.
@@ -855,10 +905,14 @@ export default function Home() {
 
   // ── Slide-type-driven styling ─────────────────────────────────────────────
   const slideType = current?.slideType ?? null;
+  const isColumnsSlide =
+    slideType === "columns" ||
+    (slideType == null && Array.isArray(current?.columns) && (current?.columns?.length ?? 0) > 0);
   // Defense-in-depth: if sideA/sideB fields are present, treat as comparison regardless of slideType
   const isComparisonSlide =
-    slideType === "comparison" ||
-    !!(current?.sideALabel || current?.sideAContent || current?.sideABullets);
+    !isColumnsSlide &&
+    (slideType === "comparison" ||
+    !!(current?.sideALabel || current?.sideAContent || current?.sideABullets));
   const isNoImageSlide = slideType
     ? ["reflection", "question", "quiz", "recap"].includes(slideType)
     : NO_IMG_TITLE_RE.test(current?.title ?? "");
@@ -876,12 +930,15 @@ export default function Home() {
     quiz: "📝 Quiz",
     recap: "📋 Recap",
     comparison: "⚖️ Compare",
+    columns: "🗂️ Grid",
     fact: "⭐ Fact",
     example: "💡 Example",
     intro: "📖 Intro",
     explanation: "🔍 Explain",
   };
-  const slideTypeLabel = isComparisonSlide
+  const slideTypeLabel = isColumnsSlide
+    ? "🗂️ Grid"
+    : isComparisonSlide
     ? "⚖️ Compare"
     : slideType
     ? slideTypeLabels[slideType] ?? null
@@ -1434,7 +1491,145 @@ export default function Home() {
                     </div>
 
                     {/* Content row — layout varies by slide type */}
-                    {isComparisonSlide ? (
+                    {isColumnsSlide && current?.columns?.length ? (
+                      /* ── COLUMNS: visual card grid (image + label + description) ── */
+                      <div
+                        className="flex-1 flex min-h-0"
+                        style={{ background: contentBg }}
+                      >
+                        {(current.columns ?? []).map((col, colIdx) => (
+                          <div
+                            key={colIdx}
+                            className="flex-1 flex flex-col"
+                            style={{
+                              borderRight:
+                                colIdx < (current.columns?.length ?? 1) - 1
+                                  ? "3px solid #e2e8f0"
+                                  : "none",
+                            }}
+                          >
+                            {/* Column image */}
+                            <div
+                              className="shrink-0 relative overflow-hidden group"
+                              style={{
+                                height: "52%",
+                                borderBottom: "2px solid #e2e8f0",
+                                background: "#f8fafc",
+                              }}
+                              tabIndex={0}
+                              title="Click here and paste to replace image (Ctrl+V)"
+                              onPaste={(e) => {
+                                for (const item of Array.from(e.clipboardData?.items ?? [])) {
+                                  if (item.type.startsWith("image/")) {
+                                    const file = item.getAsFile();
+                                    if (!file) continue;
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => {
+                                      patchSlide(idx, {
+                                        columns: (current.columns ?? []).map((c, ci) =>
+                                          ci === colIdx
+                                            ? { ...c, image: ev.target?.result as string, imageCredit: "Pasted image" }
+                                            : c
+                                        ),
+                                      });
+                                    };
+                                    reader.readAsDataURL(file);
+                                    e.preventDefault();
+                                    return;
+                                  }
+                                }
+                              }}
+                            >
+                              {col.image ? (
+                                <>
+                                  <img
+                                    src={col.image}
+                                    alt={col.imageAlt || col.label}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                                    <span
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-black px-2 py-0.5 rounded-lg"
+                                      style={{ color: "#ffffff", background: "#166534" }}
+                                    >
+                                      Paste to replace (Ctrl+V)
+                                    </span>
+                                  </div>
+                                </>
+                              ) : imagesLoading || stabilityColKeys.has(`${idx}:${colIdx}`) ? (
+                                <div
+                                  className="w-full h-full flex items-center justify-center animate-pulse"
+                                  style={{ background: "#f1f5f9" }}
+                                >
+                                  <span
+                                    className="text-[9px] font-black"
+                                    style={{ color: "#94a3b8" }}
+                                  >
+                                    {stabilityColKeys.has(`${idx}:${colIdx}`) ? "Generating AI image…" : "Loading…"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div
+                                  className="w-full h-full flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+                                  style={{ background: "#f9fafb", border: "2px dashed #d1d5db" }}
+                                >
+                                  <span className="text-xl select-none opacity-30">🖼</span>
+                                  <span className="text-[9px] font-black" style={{ color: "#9ca3af" }}>
+                                    Paste image here
+                                  </span>
+                                </div>
+                              )}
+                              {col.imageCredit && (
+                                <div
+                                  className="absolute bottom-0 right-0 px-1.5 py-0.5 text-[8px] font-bold rounded-tl"
+                                  style={{
+                                    color: "#166534",
+                                    background: "rgba(255,255,255,0.85)",
+                                  }}
+                                >
+                                  {col.imageCredit}
+                                </div>
+                              )}
+                            </div>
+                            {/* Column label + description */}
+                            <div className="flex-1 flex flex-col items-center justify-center px-3 py-3 text-center gap-1 overflow-hidden">
+                              <input
+                                key={`col-label-${idx}-${colIdx}`}
+                                defaultValue={col.label}
+                                onBlur={(e) => {
+                                  const val = e.target.value.trim() || col.label;
+                                  patchSlide(idx, {
+                                    columns: (current.columns ?? []).map((c, ci) =>
+                                      ci === colIdx ? { ...c, label: val } : c
+                                    ),
+                                  });
+                                }}
+                                className="font-black text-xs md:text-sm leading-tight bg-transparent border-0 outline-none w-full text-center resize-none"
+                                style={{ color: "#166534" }}
+                              />
+                              <textarea
+                                key={`col-desc-${idx}-${colIdx}`}
+                                defaultValue={col.description}
+                                onBlur={(e) => {
+                                  const val = e.target.value.trim() || col.description;
+                                  patchSlide(idx, {
+                                    columns: (current.columns ?? []).map((c, ci) =>
+                                      ci === colIdx ? { ...c, description: val } : c
+                                    ),
+                                  });
+                                }}
+                                rows={2}
+                                className="text-[10px] md:text-xs leading-snug bg-transparent border-0 outline-none w-full text-center resize-none"
+                                style={{
+                                  color: contentTextColor,
+                                  fieldSizing: "content" as never,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : isComparisonSlide ? (
                       /* ── COMPARISON: two-column split, image(s) inside columns ── */
                       <div
                         className="flex-1 flex flex-col min-h-0"
@@ -1444,10 +1639,10 @@ export default function Home() {
                         {!current?.imageB &&
                           (displayImage ||
                             imagesLoading ||
-                            stabilityIdx === idx ||
+                            stabilitySlides.has(idx) ||
                             diagramLoadingSlides.has(idx)) && (
                             <div
-                              className="shrink-0 relative overflow-hidden"
+                              className="shrink-0 relative overflow-hidden group"
                               style={{
                                 height: "38%",
                                 borderBottom: "3px solid #e2e8f0",
@@ -1493,9 +1688,19 @@ export default function Home() {
                                   >
                                     {diagramLoadingSlides.has(idx)
                                       ? "Generating diagram…"
-                                      : stabilityIdx === idx
+                                      : stabilitySlides.has(idx)
                                       ? "Generating AI image…"
                                       : "Loading image…"}
+                                  </span>
+                                </div>
+                              )}
+                              {displayImage && (
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
+                                  <span
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
+                                    style={{ color: "#ffffff", background: "#166534" }}
+                                  >
+                                    Paste to replace (Ctrl+V)
                                   </span>
                                 </div>
                               )}
@@ -1520,29 +1725,48 @@ export default function Home() {
                             style={{ borderRight: "4px solid rgb(48,47,45)" }}
                           >
                             <div
-                              className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
+                              className="shrink-0 flex items-center px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
                               style={{
                                 background: "#166534",
                                 color: "#fff",
                                 borderBottom: "2px solid #14532d",
                               }}
                             >
-                              ◀ {current?.sideALabel ?? "Side A"}
+                              <span className="mr-1">◀</span>
+                              <input
+                                key={`sideA-label-${idx}`}
+                                defaultValue={current?.sideALabel ?? "Side A"}
+                                onBlur={(e) =>
+                                  patchSlide(idx, { sideALabel: e.target.value.trim() || "Side A" })
+                                }
+                                className="bg-transparent border-0 outline-none flex-1 min-w-0 font-black uppercase tracking-wider text-[10px] md:text-xs"
+                                style={{ color: "#fff" }}
+                              />
                             </div>
                             {/* Side A image (only when imageB exists — two-image layout) */}
                             {current?.imageB && displayImage && (
                               <div
-                                className="shrink-0 relative overflow-hidden"
+                                className="shrink-0 relative overflow-hidden group"
                                 style={{
                                   height: "38%",
                                   borderBottom: "2px solid #e2e8f0",
                                 }}
+                                tabIndex={0}
+                                onPaste={(e) => handleImagePaste(e, idx)}
                               >
                                 <img
                                   src={displayImage}
                                   alt={current?.imageAlt || ""}
                                   className="w-full h-full object-cover"
                                 />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
+                                  <span
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
+                                    style={{ color: "#ffffff", background: "#166534" }}
+                                  >
+                                    Paste to replace (Ctrl+V)
+                                  </span>
+                                </div>
                                 {imageCredit && (
                                   <div
                                     className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl"
@@ -1579,22 +1803,50 @@ export default function Home() {
                           {/* Side B */}
                           <div className="flex-1 flex flex-col overflow-hidden">
                             <div
-                              className="shrink-0 px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
+                              className="shrink-0 flex items-center px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
                               style={{
                                 background: "#14532d",
                                 color: "#fff",
                                 borderBottom: "2px solid #14532d",
                               }}
                             >
-                              {current?.sideBLabel ?? "Side B"} ▶
+                              <input
+                                key={`sideB-label-${idx}`}
+                                defaultValue={current?.sideBLabel ?? "Side B"}
+                                onBlur={(e) =>
+                                  patchSlide(idx, { sideBLabel: e.target.value.trim() || "Side B" })
+                                }
+                                className="bg-transparent border-0 outline-none flex-1 min-w-0 font-black uppercase tracking-wider text-[10px] md:text-xs"
+                                style={{ color: "#fff" }}
+                              />
+                              <span className="ml-1">▶</span>
                             </div>
                             {/* Side B image (only when imageB exists — two-image layout) */}
                             {current?.imageB && (
                               <div
-                                className="shrink-0 relative overflow-hidden"
+                                className="shrink-0 relative overflow-hidden group"
                                 style={{
                                   height: "38%",
                                   borderBottom: "2px solid #e2e8f0",
+                                }}
+                                tabIndex={0}
+                                onPaste={(e) => {
+                                  for (const item of Array.from(e.clipboardData?.items ?? [])) {
+                                    if (item.type.startsWith("image/")) {
+                                      const file = item.getAsFile();
+                                      if (!file) continue;
+                                      const reader = new FileReader();
+                                      reader.onload = (ev) => {
+                                        patchSlide(idx, {
+                                          imageB: ev.target?.result as string,
+                                          imageBCredit: "Pasted image",
+                                        });
+                                      };
+                                      reader.readAsDataURL(file);
+                                      e.preventDefault();
+                                      return;
+                                    }
+                                  }
                                 }}
                               >
                                 <img
@@ -1602,6 +1854,14 @@ export default function Home() {
                                   alt={current?.imageAlt || ""}
                                   className="w-full h-full object-cover"
                                 />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
+                                  <span
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
+                                    style={{ color: "#ffffff", background: "#166534" }}
+                                  >
+                                    Paste to replace (Ctrl+V)
+                                  </span>
+                                </div>
                                 {current?.imageBCredit && (
                                   <div
                                     className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl"
@@ -1645,7 +1905,7 @@ export default function Home() {
                       >
                         {/* Image top */}
                         <div
-                          className="shrink-0 relative overflow-hidden"
+                          className="shrink-0 relative overflow-hidden group"
                           style={{
                             height: "45%",
                             borderBottom: "3px solid #e2e8f0",
@@ -1680,7 +1940,7 @@ export default function Home() {
                               />
                             )
                           ) : imagesLoading ||
-                            stabilityIdx === idx ||
+                            stabilitySlides.has(idx) ||
                             diagramLoadingSlides.has(idx) ? (
                             <div
                               className="w-full h-full flex items-center justify-center animate-pulse"
@@ -1692,7 +1952,7 @@ export default function Home() {
                               >
                                 {diagramLoadingSlides.has(idx)
                                   ? "Generating diagram…"
-                                  : stabilityIdx === idx
+                                  : stabilitySlides.has(idx)
                                   ? "Generating AI image…"
                                   : "Loading image…"}
                               </span>
@@ -1713,6 +1973,16 @@ export default function Home() {
                                 style={{ color: "#9ca3af" }}
                               >
                                 Paste image here
+                              </span>
+                            </div>
+                          )}
+                          {displayImage && (
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
+                              <span
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
+                                style={{ color: "#ffffff", background: "#166534" }}
+                              >
+                                Paste to replace (Ctrl+V)
                               </span>
                             </div>
                           )}
@@ -1987,7 +2257,7 @@ export default function Home() {
                                   </div>
                                 </div>
                               ) : imagesLoading ||
-                                stabilityIdx === idx ||
+                                stabilitySlides.has(idx) ||
                                 diagramLoadingSlides.has(idx) ? (
                                 <div
                                   className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
@@ -2002,7 +2272,7 @@ export default function Home() {
                                   >
                                     {diagramLoadingSlides.has(idx)
                                       ? "Generating diagram…"
-                                      : stabilityIdx === idx
+                                      : stabilitySlides.has(idx)
                                       ? "Generating AI image…"
                                       : "Loading image…"}
                                   </span>

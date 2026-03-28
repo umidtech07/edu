@@ -25,6 +25,12 @@ type Slide = {
   sideBContent?: string | null;
   imageB?: string | null;
   imageBCredit?: string | null;
+  columns?: Array<{
+    label: string;
+    description: string;
+    image?: string | null;
+    imageCredit?: string | null;
+  }> | null;
 };
 
 async function fetchBytes(url: string): Promise<Uint8Array> {
@@ -488,6 +494,69 @@ export async function POST(req: Request) {
             }
             cursorY = lineY - 10;
             if (cursorY < contentBottom + 10) break;
+          }
+        }
+
+      } else if (s.slideType === "columns" && s.columns?.length) {
+        // ── COLUMNS (grid): N equal columns, image top + label + description ──
+        const cols = s.columns;
+        const N = cols.length;
+        const marginX = 24;
+        const totalW = pageW - marginX * 2;
+        const colSep = 4;
+        const colW = Math.floor((totalW - colSep * (N - 1)) / N);
+        const imgH = Math.round(contentH * 0.52);
+        const imgY = contentTop - imgH;
+
+        for (let i = 0; i < N; i++) {
+          const col = cols[i];
+          const colX = marginX + i * (colW + colSep);
+
+          // Separator line between columns
+          if (i > 0) {
+            page.drawRectangle({
+              x: colX - colSep, y: contentBottom,
+              width: colSep, height: contentH,
+              color: RULE,
+            });
+          }
+
+          // Image area
+          page.drawRectangle({
+            x: colX, y: imgY, width: colW, height: imgH,
+            color: LIGHT, borderColor: RULE, borderWidth: 1,
+          });
+
+          if (col.image) {
+            try {
+              const embedded = await loadAndEmbedImage(pdf, col.image);
+              drawImageCover(page, embedded, colX, imgY, colW, imgH);
+            } catch { /* leave empty box */ }
+          }
+
+          if (col.imageCredit) {
+            page.drawText(sanitize(col.imageCredit).slice(0, 40), {
+              x: colX + 3, y: imgY - 12, size: 7, font, color: MID,
+            });
+          }
+
+          // Label
+          const labelY = imgY - (col.imageCredit ? 24 : 10);
+          const labelLines = wrapText(sanitize(col.label ?? ""), Math.floor(colW / 8)).slice(0, 2);
+          let labelCursor = labelY;
+          for (const line of labelLines) {
+            page.drawText(line, { x: colX + 6, y: labelCursor, size: 15, font: fontBold, color: NAVY });
+            labelCursor -= 20;
+          }
+
+          // Description
+          const descY = labelCursor - 4;
+          const descLines = wrapText(sanitize(col.description ?? ""), Math.floor(colW / 7.5));
+          let descCursor = descY;
+          for (const line of descLines) {
+            if (descCursor < contentBottom + 8) break;
+            page.drawText(line, { x: colX + 6, y: descCursor, size: 13, font, color: DARK });
+            descCursor -= 18;
           }
         }
 

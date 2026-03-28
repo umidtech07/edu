@@ -3,6 +3,155 @@ import { openai } from "@/lib/openai";
 
 export const runtime = "nodejs";
 
+function buildCategorySlideSequence(
+  topicType: string,
+  structureItems: string[],
+  isPrimary: boolean
+): string {
+  switch (topicType) {
+    case "collection": {
+      const items = structureItems.slice(0, 6);
+      const itemLines = items.length > 0
+        ? items.map((item, i) => `  ${i + 3}. fact or explanation — dedicated slide covering: "${item}"`).join("\n")
+        : `  3–8. fact or explanation — one dedicated slide per subject in the collection`;
+      const compSlide = items.length + 3;
+      const recapSlide = items.length + 4;
+      return `Slide sequence for this COLLECTION topic (${Math.max(recapSlide, 10)} slides in total; use exactly 10):
+  1. intro — introduce the collection as a whole
+  2. columns (MANDATORY) — one card per subject in the collection; each card: short label = subject name, description = one sentence about it, imageQuery = English photo search term for that subject
+${itemLines}
+  ${compSlide <= 9 ? compSlide : 9}. comparison — compare the two most contrasting subjects side by side
+  10. recap — key takeaways from the full collection`;
+    }
+
+    case "process": {
+      const items = structureItems.slice(0, 6);
+      const stepLines = items.length > 0
+        ? items.map((step, i) => `  ${i + 3}. explanation — step ${i + 1}: "${step}"`).join("\n")
+        : `  3–8. explanation — one slide per step in sequence`;
+      const quizSlide = items.length + 3;
+      return `Slide sequence for this PROCESS topic (use exactly 10 slides):
+  1. intro — introduce the process and why it matters
+  2. explanation — overview: where and when this process occurs
+${stepLines}
+  ${quizSlide <= 9 ? quizSlide : 9}. quiz — true/false question about a key step (no answer given)
+  10. recap — walk through the full process from start to finish`;
+    }
+
+    case "narrative": {
+      const items = structureItems.slice(0, 6);
+      const phaseLines = items.length > 0
+        ? items.map((phase, i) => `  ${i + 3}. ${i % 2 === 0 ? "explanation" : "fact"} — "${phase}"`).join("\n")
+        : `  3–8. explanation or fact — one slide per phase/milestone in chronological order`;
+      const reflectSlide = items.length + 3;
+      return `Slide sequence for this NARRATIVE topic (use exactly 10 slides):
+  1. intro — set the scene and hook the audience
+  2. explanation — historical context and background
+${phaseLines}
+  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection — what lessons does this story teach? (no image)
+  10. recap — summarize the key moments and their lasting significance`;
+    }
+
+    case "comparison": {
+      const thingA = structureItems[0] ?? "Subject A";
+      const thingB = structureItems[1] ?? "Subject B";
+      const compStyle = isPrimary ? "side-by-side visual comparison" : "analytical comparison";
+      return `Slide sequence for this COMPARISON topic (use exactly 10 slides):
+  1. intro — introduce both "${thingA}" and "${thingB}" and why comparing them is insightful
+  2. explanation — background context needed to understand the comparison
+  3. explanation — deep dive into "${thingA}": key features and characteristics
+  4. explanation — deep dive into "${thingB}": key features and characteristics
+  5. comparison — ${compStyle}: shared similarities between both
+  6. comparison — ${compStyle}: key differences that set them apart
+  7. comparison — ${compStyle}: strengths and weaknesses of each
+  8. fact — a surprising fact that applies to both or highlights their contrast
+  9. quiz — true/false question comparing the two (no answer given)
+  10. recap — balanced summary: which excels at what, and overall takeaway`;
+    }
+
+    case "cause-effect": {
+      const items = structureItems.slice(0, 4);
+      const causeLines = items.length > 0
+        ? items.map((item, i) => `  ${i + 4}. ${i < Math.ceil(items.length / 2) ? "explanation" : "fact"} — "${item}"`).join("\n")
+        : `  4–7. explanation or fact — one slide per cause or effect`;
+      const compSlide = items.length + 4;
+      const reflectSlide = items.length + 5;
+      return `Slide sequence for this CAUSE-EFFECT topic (use exactly 10 slides):
+  1. intro — introduce the situation and why understanding it matters
+  2. explanation — background: the root context or starting conditions
+  3. columns (MANDATORY) — 3–4 main causes or contributing factors as visual cards; each card: label = cause name, description = one sentence explaining it, imageQuery = English photo search term
+${causeLines}
+  ${compSlide <= 8 ? compSlide : 8}. comparison — contrast the most important cause with the most significant effect
+  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection — what could have changed the outcome? (no image)
+  10. recap — summarize causes, effects, and key lessons learned`;
+    }
+
+    default: // single-subject
+      return `Slide sequence for this SINGLE-SUBJECT topic (use exactly 10 slides):
+  1. intro — title/hook slide presenting the subject
+  2. explanation — define or describe the subject clearly
+  3. columns (MANDATORY) — 3–4 key features, parts, or characteristics as visual cards; each card: label = feature name, description = one sentence, imageQuery = English photo search term
+  4. fact — surprising or little-known fact about the subject
+  5. example — a real-world example or application
+  6. explanation — how it works or why it matters (deeper layer)
+  7. fact — another interesting fact from a different angle
+  8. example — another example or use case showing variety
+  9. quiz — one true/false question about the subject (no answer given)
+  10. recap — summary of the main points`;
+  }
+}
+
+async function detectTopicStructure(
+  topic: string,
+): Promise<{ topicType: string; structureItems: string[] }> {
+  // Request exactly 6 content items — matches the 6 content-slide slots in each category template
+  const contentSlides = 6;
+  try {
+    const result = await openai.chat.completions.create({
+      model: "gpt-4.1-nano",
+      temperature: 0,
+      max_tokens: 300,
+      messages: [
+        {
+          role: "user",
+          content: `Classify this lesson topic and extract its key structure.
+
+Topic: "${topic}"
+
+Choose ONE category:
+- "collection"     — multiple distinct people, places, animals, or examples (e.g. "famous inventors", "world capitals")
+- "process"        — a step-by-step sequence of how something works or happens (e.g. "water cycle", "how digestion works")
+- "narrative"      — a chronological story or historical arc (e.g. "history of the internet", "the French Revolution")
+- "comparison"     — explicitly comparing exactly two distinct things, sides, or viewpoints (e.g. "plants vs animals")
+- "cause-effect"   — explains the causes and/or effects of something (e.g. "causes of climate change")
+- "single-subject" — one focused concept, organism, person, or idea that doesn't fit above (e.g. "photosynthesis", "Albert Einstein")
+
+Then list ${contentSlides} specific items the lesson content should cover:
+- collection    → the distinct subjects/people/places to include
+- process       → the steps in order
+- narrative     → key phases or milestones in chronological order
+- comparison    → EXACTLY 2 items: the two things being compared
+- cause-effect  → the main causes or effects to address
+- single-subject → return []
+
+Return ONLY JSON: {"topicType": string, "structureItems": string[]}`,
+        },
+      ],
+    });
+    const parsed = safeJsonParse(result.choices[0]?.message?.content ?? "");
+    if (
+      parsed &&
+      typeof parsed.topicType === "string" &&
+      Array.isArray(parsed.structureItems)
+    ) {
+      return { topicType: parsed.topicType, structureItems: parsed.structureItems as string[] };
+    }
+  } catch {
+    // Non-critical — fall back gracefully
+  }
+  return { topicType: "single-subject", structureItems: [] };
+}
+
 function safeJsonParse(text: string) {
   const clean = text
     .trim()
@@ -45,7 +194,19 @@ export async function POST(req: Request) {
       typeof grade === "number" ? grade : Number(String(grade).trim());
     const isPrimary =
       primaryMode || (!Number.isNaN(numericGrade) && numericGrade <= 4);
-    const effectiveSlideCount = isPrimary ? 5 : slideCount;
+    const effectiveSlideCount = slideCount;
+
+    // ── Topic structure pre-pass ───────────────────────────────────────────────
+    // Classify the topic and extract structural items (subjects, steps, phases, etc.)
+    // so the main prompt can enforce coverage diversity / ordering.
+    const topicStructure = await detectTopicStructure(topic);
+    const VALID_TOPIC_TYPES = ["collection", "process", "narrative", "comparison", "cause-effect", "single-subject"];
+    const safeTopicType = VALID_TOPIC_TYPES.includes(topicStructure.topicType)
+      ? topicStructure.topicType
+      : "single-subject";
+    const structureItems = topicStructure.structureItems;
+
+    const categorySlideSequence = buildCategorySlideSequence(safeTopicType, structureItems, isPrimary);
 
     // ── Language handling ──────────────────────────────────────────────────────
     // "O'zbekiston MMTV" curriculum forces Uzbek/Russian output regardless of topic language.
@@ -56,9 +217,9 @@ export async function POST(req: Request) {
     const imageQueryEnglishRule = `\n- CRITICAL: "imageQuery" is sent to English-language stock photo APIs. It MUST be written in English regardless of the topic language. Never write imageQuery in Uzbek, Russian, or any other language.\n  ✗ WRONG:   "imageQuery": "vulqon va tog' taqqoslash"\n  ✓ CORRECT: "imageQuery": "volcano mountain comparison"`;
     const languageInstruction = isUzbekCurriculum
       ? hasCyrillic
-        ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Russian.${imageQueryEnglishRule}`
-        : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in Uzbek (Latin script).${imageQueryEnglishRule}`
-      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent) in that same language. If the topic is in English, respond in English.${imageQueryEnglishRule}`;
+        ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Russian.${imageQueryEnglishRule}`
+        : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Uzbek (Latin script).${imageQueryEnglishRule}`
+      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in that same language. If the topic is in English, respond in English.${imageQueryEnglishRule}`;
 
     const visualTypeRule = `
 - "visualType": choose based on what best illustrates the slide:
@@ -71,17 +232,30 @@ export async function POST(req: Request) {
   - null — when visualType is "diagram" or null`;
 
     const slideTypeRule = `
-- "slideType": classify each slide as exactly one of: "intro" | "explanation" | "example" | "fact" | "comparison" | "reflection" | "question" | "quiz" | "recap"
+- "slideType": classify each slide as exactly one of: "intro" | "explanation" | "example" | "fact" | "comparison" | "columns" | "reflection" | "question" | "quiz" | "recap"
   - "intro" — opening/title slide (always has an image)
   - "explanation" — teaches a key concept (can have an image)
   - "example" — concrete example or application (can have an image)
   - "fact" — surprising or interesting fact (can have an image)
   - "comparison" — compares two things, sides, or viewpoints (can have an image); MUST include "sideALabel", "sideBLabel", and either "sideABullets"+"sideBBullets" (primary) or "sideAContent"+"sideBContent" (secondary) — each side describes a DIFFERENT thing/perspective
+  - "columns" — 2–4 items displayed side by side in a visual card grid; use for rules, tips, features, categories, or any content that benefits from multiple visual cards. MUST include a "columns" array of 2–4 objects, each: {"label":"string (short bold title)","description":"string (1 sentence)","imageQuery":"string (English stock photo search term)"}. Top-level imageQuery MUST be null. Do NOT include bullets or content for this slide type.
+  - MANDATORY "columns" slides: wherever the slide sequence above marks a slide as "columns (MANDATORY)", you MUST output slideType: "columns" with a populated "columns" array — never substitute another slide type in that position.
   - "reflection" — asks students to think or reflect — imageQuery MUST be null
   - "question" — open discussion prompt — imageQuery MUST be null
   - "quiz" — true/false or multiple choice — imageQuery MUST be null
   - "recap" — summary or review — imageQuery MUST be null
-  - Slides with slideType "reflection", "question", "quiz", or "recap" MUST have imageQuery: null, imageStrategy: null, visualType: null`;
+  - Slides with slideType "reflection", "question", "quiz", or "recap" MUST have imageQuery: null, imageStrategy: null, visualType: null
+  - Slides with slideType "columns" MUST have imageQuery: null, imageStrategy: null, visualType: null (images are inside each column object)`;
+
+    const imageQueryUniquenessRule = `
+- EVERY eligible slide (intro, explanation, example, fact, comparison) MUST have a non-null imageQuery — do NOT leave visual slides without one.
+- CRITICAL — ALL imageQuery values across the entire deck MUST be visually distinct from each other. Each query must describe a clearly different scene, subject, angle, or setting. No two slides may share the same subject, action, or composition.
+- Make each imageQuery highly specific to THAT slide's unique content — not just the general topic. Imagine you are picking a different photograph for each slide from a photo library, each one illustrating a distinct aspect.
+  ✗ WRONG (all similar): "volcano eruption", "volcano lava", "volcano smoke"
+  ✓ CORRECT (all distinct): "red hot magma flowing down mountain slope", "ash cloud rising above volcano crater aerial view", "geologist measuring volcanic rock samples up close"
+- For "literal" imageStrategy: use a precise, descriptive noun phrase that names the specific object, animal, place, or scene depicted on that slide (e.g. "monarch butterfly on orange flower", "ancient roman aqueduct ruins").
+- For "metaphor" imageStrategy: paint a vivid, concrete visual scene that metaphorically represents the abstract concept (e.g. for "momentum": "freight train speeding through a mountain tunnel at night"; for "teamwork": "rowers in a rowing shell perfectly synchronized on a misty river").
+- Avoid generic stock-photo clichés: never use "students learning", "teacher in classroom", "people smiling", "colorful background", or single-word queries.`;
 
     const prompt = isPrimary
       ? `Create a ${effectiveSlideCount}-slide lesson deck for young students (grades 1–4).
@@ -89,36 +263,34 @@ export async function POST(req: Request) {
 Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
 
 Return ONLY valid JSON:
-{"deckTitle":"string","slides":[{"title":"string","bullets":["string"],"imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"reflection"|"question"|"quiz"|"recap"}]}
+{"deckTitle":"string","slides":[{"title":"string","bullets":["string"],"imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"columns"|"reflection"|"question"|"quiz"|"recap","columns":[{"label":"string","description":"string","imageQuery":"string"}]}]}
 
-Slide mix (vary types across the deck):
-- intro (slide 1), explanation, example, interesting fact, comparison, reflection question, true/false quiz (no answer), recap
+${categorySlideSequence}
 
 Content rules:
 - Very simple and child-friendly language
 - Bullets: max 12 words each, 3–5 bullets per slide
-- 2–3 visual slides; rest have imageQuery: null, imageStrategy: null, and visualType: null
+- ALL intro, explanation, example, fact, and comparison slides MUST have a non-null imageQuery; only reflection, question, quiz, and recap slides have imageQuery: null
 - When imageQuery is null, imageStrategy and visualType must also be null
 - EVERY slide MUST have a non-empty "bullets" array with 3–5 bullets — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`
+- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${imageQueryUniquenessRule}${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`
       : `Create a ${effectiveSlideCount}-slide lesson deck for upper-grade students (grades 5–8).
 
 Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
 
 Return ONLY valid JSON:
-{"deckTitle":"string","slides":[{"title":"string","content":"string","imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"reflection"|"question"|"quiz"|"recap"}]}
+{"deckTitle":"string","slides":[{"title":"string","content":"string","imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"columns"|"reflection"|"question"|"quiz"|"recap","columns":[{"label":"string","description":"string","imageQuery":"string"}]}]}
 
-Slide mix (vary types across the deck):
-- intro (slide 1), explanation, example, interesting fact, comparison, reflection question, true/false quiz (no answer), recap
+${categorySlideSequence}
 
 Content rules:
-- "content" is a single paragraph of 2–3 sentences for grades 5-7 and 4-5 sentences for above explaining the slide topic clearly
+- "content" must be **5–6 sentences** for every slide — no shorter, no longer. Be creative and expressive: use **bold** for key terms, *italics* for emphasis or examples, and feel free to break the content into short indented sub-points or a mini-list when that helps clarity. Mix narrative prose with structured fragments — vary the format slide to slide so the deck feels alive.
 - Use subject-specific vocabulary appropriate for the grade level
-- Include concrete examples, data, or evidence where relevant
-- 2–3 visual slides; quiz/reflection slides get imageQuery: null, imageStrategy: null, and visualType: null
+- Include concrete examples, data, vivid analogies, or surprising facts to make content memorable
+- ALL intro, explanation, example, fact, and comparison slides MUST have a non-null imageQuery; only reflection, question, quiz, and recap slides have imageQuery: null
 - When imageQuery is null, imageStrategy and visualType must also be null
 - EVERY slide MUST have a non-empty "content" field — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (1–2 sentences about thing A), "sideBContent" (1–2 sentences about thing B). Each side MUST describe a DIFFERENT thing or perspective.${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`;
+- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (2–3 rich sentences about thing A with bold/italic where helpful), "sideBContent" (2–3 rich sentences about thing B with bold/italic where helpful). Each side MUST describe a DIFFERENT thing or perspective.${imageQueryUniquenessRule}${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${languageInstruction}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
@@ -139,8 +311,8 @@ Content rules:
       );
     }
 
-    const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","reflection","question","quiz","recap"];
-    const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap"]);
+    const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","columns","reflection","question","quiz","recap"];
+    const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap","columns"]);
     // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false", "Comparison")
     // Also covers Uzbek Latin and Russian/Uzbek Cyrillic equivalents when slideType is null.
     const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
@@ -155,13 +327,18 @@ Content rules:
         if (!slideType && (s.sideALabel || s.sideAContent || s.sideABullets || s.sideBContent || s.sideBBullets)) {
           slideType = "comparison";
         }
+        // Fallback: if AI returned a columns array but forgot slideType:"columns", infer it
+        if (!slideType && Array.isArray(s.columns) && s.columns.length > 0) {
+          slideType = "columns";
+        }
         const isNoImg = slideType
           ? NO_IMAGE_SLIDE_TYPES.has(slideType)
           : NO_IMAGE_TITLE_RE.test(s.title ?? "");
         const isComparison = slideType === "comparison";
+        const isColumns = slideType === "columns";
         return {
           title: s.title ?? "",
-          ...(isPrimary
+          ...(isPrimary && !isColumns
             ? {
                 // Fallback: if AI omitted bullets but provided sideA/B (confused non-comparison slide), merge them
                 bullets: Array.isArray(s.bullets) && s.bullets.length > 0
@@ -172,12 +349,14 @@ Content rules:
                   ? s.content.split(/(?<=[.!?])\s+/).filter(Boolean)
                   : [],
               }
-            : {
+            : !isColumns
+            ? {
                 // Fallback: if AI omitted content but provided sideA/B (confused non-comparison slide), join them
                 content: s.content || (!isComparison
                   ? [s.sideAContent, s.sideBContent].filter(Boolean).join(" ") || null
                   : null),
-              }),
+              }
+            : {}),
           ...(isComparison && {
             sideALabel: s.sideALabel ?? null,
             sideBLabel: s.sideBLabel ?? null,
@@ -205,6 +384,15 @@ Content rules:
                   return { sideAContent: null, sideBContent: null };
                 })()),
           }),
+          ...(isColumns && {
+            columns: Array.isArray(s.columns)
+              ? s.columns.slice(0, 4).map((c: any) => ({
+                  label: typeof c.label === "string" ? c.label : "",
+                  description: typeof c.description === "string" ? c.description : "",
+                  imageQuery: typeof c.imageQuery === "string" && c.imageQuery.trim() ? c.imageQuery.trim() : null,
+                }))
+              : null,
+          }),
           imageQuery: isNoImg ? null : (s.imageQuery ?? null),
           imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : null),
           visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : null),
@@ -220,6 +408,14 @@ Content rules:
         s.imageQuery = null;
         s.imageStrategy = null;
         s.visualType = null;
+      }
+      // Also clear Cyrillic column imageQueries
+      if (Array.isArray(s.columns)) {
+        for (const col of s.columns as Array<Record<string, unknown>>) {
+          if (typeof col.imageQuery === "string" && CYRILLIC_RE.test(col.imageQuery)) {
+            col.imageQuery = null;
+          }
+        }
       }
     }
 
@@ -238,11 +434,24 @@ Content rules:
     if (isNonEnglish) {
       const deckTitleRaw = parsed.deckTitle ?? topic;
       // Include the deckTitle at index 0 so slide 0's imageQuery is also correctly sourced
-      const toTranslate: Array<{ i: number | "deck"; q: string }> = [
+      type TranslateItem = { i: number | "deck"; q: string } | { colSlide: number; colIdx: number; q: string };
+      const toTranslate: TranslateItem[] = [
         { i: "deck", q: deckTitleRaw },
         ...(slides as Array<Record<string, unknown>>)
-          .map((s, i) => ({ i, q: s.imageQuery as string }))
-          .filter(({ q }) => typeof q === "string" && (q as string).trim()),
+          .flatMap((s, i) => {
+            const items: TranslateItem[] = [];
+            if (typeof s.imageQuery === "string" && (s.imageQuery as string).trim()) {
+              items.push({ i, q: s.imageQuery as string });
+            }
+            if (Array.isArray(s.columns)) {
+              (s.columns as Array<Record<string, unknown>>).forEach((col, colIdx) => {
+                if (typeof col.imageQuery === "string" && (col.imageQuery as string).trim()) {
+                  items.push({ colSlide: i, colIdx, q: col.imageQuery as string });
+                }
+              });
+            }
+            return items;
+          }),
       ];
 
       if (toTranslate.length > 0) {
@@ -259,12 +468,17 @@ Content rules:
           });
           const translated = safeJsonParse(tx.choices[0]?.message?.content ?? "");
           if (Array.isArray(translated)) {
-            toTranslate.forEach(({ i }, idx) => {
-              if (typeof translated[idx] === "string" && translated[idx].trim()) {
-                if (i === "deck") {
-                  englishDeckTitle = translated[idx].trim();
-                } else {
-                  (slides as Array<Record<string, unknown>>)[i as number].imageQuery = translated[idx].trim();
+            toTranslate.forEach((item, tIdx) => {
+              if (typeof translated[tIdx] === "string" && translated[tIdx].trim()) {
+                if ("i" in item && item.i === "deck") {
+                  englishDeckTitle = translated[tIdx].trim();
+                } else if ("i" in item) {
+                  (slides as Array<Record<string, unknown>>)[item.i as number].imageQuery = translated[tIdx].trim();
+                } else if ("colSlide" in item) {
+                  const cols = (slides as Array<Record<string, unknown>>)[item.colSlide].columns as Array<Record<string, unknown>>;
+                  if (cols?.[item.colIdx]) {
+                    cols[item.colIdx].imageQuery = translated[tIdx].trim();
+                  }
                 }
               }
             });

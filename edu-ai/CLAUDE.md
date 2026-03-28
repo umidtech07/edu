@@ -40,7 +40,7 @@ This is a **single-page Next.js app** (App Router) with no auth. All UI lives in
 
 ### Grade Modes
 
-- **Grades 1–4** (`primaryMode = true`): 5 slides, max 1 Pexels photo + max 1 AI image
+- **Grades 1–4** (`primaryMode = true`): 8 slides, max 1 Pexels photo + max 1 AI image
 - **Grades 5–8**: 8 slides, ~2–3 Pexels photos, 1 AI image fallback
 
 ### Export Routes
