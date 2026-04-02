@@ -1,10 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getFirebaseAuth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import type { User } from "firebase/auth";
 import { trackEvent } from "@/lib/track";
+
+/** Parse **bold**, *italic*, __bold__ inline markers into React nodes */
+function renderInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|__(.+?)__)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[2] !== undefined)
+      parts.push(<strong key={k++} style={{ fontWeight: 700 }}>{m[2]}</strong>);
+    else if (m[3] !== undefined)
+      parts.push(<em key={k++}>{m[3]}</em>);
+    else if (m[4] !== undefined)
+      parts.push(<strong key={k++} style={{ fontWeight: 700 }}>{m[4]}</strong>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length ? parts : text;
+}
 
 function styleSvgForSlide(
   svgString: string,
@@ -130,6 +151,7 @@ type Slide = {
 type Deck = {
   deckTitle?: string;
   slides?: Slide[];
+  topicType?: string;
 };
 
 /** Compress a base64 data URI to JPEG at reduced size to keep export payloads small. */
@@ -208,6 +230,30 @@ export default function Home() {
   const [pastedImages, setPastedImages] = useState<
     Record<number, { dataUrl: string; credit: string }>
   >({});
+
+  // debug panel state (only populated when running on localhost)
+  const [debugInfo, setDebugInfo] = useState<null | {
+    topicStructure: { topicType: string; structureItems: string[] };
+    ragLessons: Array<{ lessonNumber: number; title: string; chapter: string; content: string; score: number }>;
+    ragContext: string | null;
+    prompt: string;
+    rawCompletion: string;
+  }>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugTab, setDebugTab] = useState<"rag" | "prompt" | "deck">("prompt");
+  // tracks which bullet is in edit mode: "<slideIdx>-<bulletIdx>"
+  const [editingBullet, setEditingBullet] = useState<string | null>(null);
+  // tracks which slide's content paragraph is being edited
+  const [editingContent, setEditingContent] = useState<number | null>(null);
+
+  // responsive breakpoint for inline-style-driven layouts
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const slides = deck?.slides ?? [];
   const total = slides.length;
@@ -387,9 +433,26 @@ export default function Home() {
     });
   }
 
-  async function generateActivity(topicStr: string) {
+  async function generateActivity(
+    topicStr: string,
+    deckSlides?: Slide[],
+    deckTopicType?: string
+  ) {
     setActivityLoading(true);
     try {
+      // Strip image data before sending to keep payload small
+      const slidePayload = deckSlides?.map((s) => ({
+        title: s.title,
+        bullets: s.bullets,
+        content: s.content ?? null,
+        slideType: s.slideType ?? null,
+        sideALabel: s.sideALabel ?? null,
+        sideBLabel: s.sideBLabel ?? null,
+        sideABullets: s.sideABullets ?? null,
+        sideBBullets: s.sideBBullets ?? null,
+        sideAContent: s.sideAContent ?? null,
+        sideBContent: s.sideBContent ?? null,
+      }));
       const actRes = await fetch("/api/generate/activity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -398,6 +461,8 @@ export default function Home() {
           grade: gradeLevel,
           curriculum,
           deckTitle: deck?.deckTitle ?? topicStr,
+          slides: slidePayload ?? null,
+          topicType: deckTopicType ?? null,
         }),
       });
       if (!actRes.ok) {
@@ -465,6 +530,7 @@ export default function Home() {
 
     try {
       // ── Step 1: OpenAI text (~2–3 s) — show slides immediately ────────────
+      const isLocalhost = typeof window !== "undefined" && window.location.hostname === "localhost";
       const textRes = await fetch("/api/generate/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -474,11 +540,18 @@ export default function Home() {
           grade: gradeLevel,
           primaryMode: gradeLevel <= 4,
           curriculum,
+          debug: isLocalhost,
         }),
       });
 
       if (!textRes.ok) throw new Error("Text generation failed");
-      const { deckTitle, englishDeckTitle, slides: rawSlides } = await textRes.json();
+      const textData = await textRes.json();
+      const { deckTitle, englishDeckTitle, slides: rawSlides, topicType: deckTopicType } = textData;
+      if (isLocalhost && textData._debug) {
+        setDebugInfo(textData._debug);
+        setDebugOpen(true);
+        setDebugTab("rag");
+      }
       // Use the English-translated title for stock photo searches (slide 0 imageQuery)
       const imageSearchDeckTitle: string = englishDeckTitle ?? deckTitle;
 
@@ -512,7 +585,7 @@ export default function Home() {
         })) : null,
       }));
 
-      setDeck({ deckTitle, slides: initSlides });
+      setDeck({ deckTitle, slides: initSlides, topicType: deckTopicType ?? undefined });
       setIdx(0);
       setLoading(false);
       setImagesLoading(true);
@@ -793,7 +866,7 @@ export default function Home() {
 
       // ── Activity sheet (both mode) — fire in background ───────────────────
       if (materialType === "full") {
-        generateActivity(topic);
+        generateActivity(topic, initSlides, deckTopicType ?? undefined);
       }
     } finally {
       setLoading(false);
@@ -1095,7 +1168,7 @@ export default function Home() {
         .comic-nav-btn:active { transform: translate(2px, 2px); box-shadow: none !important; }
       `}</style>
 
-      <div className="max-w-6xl mx-auto p-5 md:p-8">
+      <div className="max-w-6xl mx-auto p-3 md:p-8">
         {/* ── Top bar ── */}
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1411,11 +1484,11 @@ export default function Home() {
 
               {/* Slide container */}
               <div className="relative flex items-center gap-3">
-                {/* Prev */}
+                {/* Prev — desktop only */}
                 <button
                   onClick={prev}
                   disabled={!canPrev}
-                  className="comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
+                  className="hidden md:flex comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
                   style={{
                     background: "#166534",
                     color: "#ffffff",
@@ -1428,7 +1501,7 @@ export default function Home() {
 
                 {/* Slide card */}
                 <div
-                  className="flex-1 aspect-video rounded-2xl overflow-hidden flex flex-col"
+                  className="w-full aspect-[3/4] sm:aspect-[4/3] md:flex-1 md:aspect-video rounded-2xl overflow-hidden flex flex-col"
                   style={{
                     background: "#ffffff",
                     border: "3px solid rgb(48, 47, 45)",
@@ -1494,25 +1567,31 @@ export default function Home() {
                     {isColumnsSlide && current?.columns?.length ? (
                       /* ── COLUMNS: visual card grid (image + label + description) ── */
                       <div
-                        className="flex-1 flex min-h-0"
+                        className="flex-1 flex flex-col md:flex-row min-h-0 overflow-y-auto md:overflow-hidden"
                         style={{ background: contentBg }}
                       >
                         {(current.columns ?? []).map((col, colIdx) => (
                           <div
                             key={colIdx}
-                            className="flex-1 flex flex-col"
+                            className="shrink-0 md:flex-1 flex flex-col"
                             style={{
-                              borderRight:
-                                colIdx < (current.columns?.length ?? 1) - 1
+                              borderBottom: isMobile
+                                ? colIdx < (current.columns?.length ?? 1) - 1
                                   ? "3px solid #e2e8f0"
-                                  : "none",
+                                  : "none"
+                                : "none",
+                              borderRight: !isMobile
+                                ? colIdx < (current.columns?.length ?? 1) - 1
+                                  ? "3px solid #e2e8f0"
+                                  : "none"
+                                : "none",
                             }}
                           >
                             {/* Column image */}
                             <div
                               className="shrink-0 relative overflow-hidden group"
                               style={{
-                                height: "52%",
+                                height: isMobile ? "180px" : "52%",
                                 borderBottom: "2px solid #e2e8f0",
                                 background: "#f8fafc",
                               }}
@@ -1718,11 +1797,14 @@ export default function Home() {
                             </div>
                           )}
                         {/* Two-column comparison */}
-                        <div className="flex flex-1 min-h-0">
+                        <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-y-auto md:overflow-hidden">
                           {/* Side A */}
                           <div
                             className="flex-1 flex flex-col overflow-hidden"
-                            style={{ borderRight: "4px solid rgb(48,47,45)" }}
+                            style={{
+                              borderRight: isMobile ? "none" : "4px solid rgb(48,47,45)",
+                              borderBottom: isMobile ? "4px solid rgb(48,47,45)" : "none",
+                            }}
                           >
                             <div
                               className="shrink-0 flex items-center px-4 py-1 text-[10px] md:text-xs font-black uppercase tracking-wider"
@@ -1748,7 +1830,7 @@ export default function Home() {
                               <div
                                 className="shrink-0 relative overflow-hidden group"
                                 style={{
-                                  height: "38%",
+                                  height: isMobile ? "160px" : "38%",
                                   borderBottom: "2px solid #e2e8f0",
                                 }}
                                 tabIndex={0}
@@ -1826,7 +1908,7 @@ export default function Home() {
                               <div
                                 className="shrink-0 relative overflow-hidden group"
                                 style={{
-                                  height: "38%",
+                                  height: isMobile ? "160px" : "38%",
                                   borderBottom: "2px solid #e2e8f0",
                                 }}
                                 tabIndex={0}
@@ -2001,60 +2083,86 @@ export default function Home() {
                         {/* Text below */}
                         <div className="flex-1 px-5 md:px-7 py-3 overflow-y-auto flex flex-col justify-center">
                           {current?.content != null ? (
-                            <textarea
-                              key={`content-${idx}`}
-                              defaultValue={current.content}
-                              onBlur={(e) => {
-                                const t = e.target.value.trim();
-                                if (t) patchSlide(idx, { content: t });
-                              }}
-                              className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                              style={{
-                                color: contentTextColor,
-                                fieldSizing: "content" as never,
-                              }}
-                            />
+                            editingContent === idx ? (
+                              <textarea
+                                autoFocus
+                                key={`content-edit-${idx}`}
+                                defaultValue={current.content}
+                                onBlur={(e) => {
+                                  const t = e.target.value.trim();
+                                  if (t) patchSlide(idx, { content: t });
+                                  setEditingContent(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Escape") setEditingContent(null);
+                                }}
+                                className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                                style={{
+                                  color: contentTextColor,
+                                  fieldSizing: "content" as never,
+                                  minHeight: "5rem",
+                                }}
+                              />
+                            ) : (
+                              <div
+                                className="text-sm md:text-base leading-relaxed w-full text-center cursor-text select-text"
+                                style={{ color: contentTextColor, minHeight: "5rem" }}
+                                onClick={() => setEditingContent(idx)}
+                              >
+                                {renderInline(current.content)}
+                              </div>
+                            )
                           ) : (
                             <div className="flex flex-col">
                               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                                {(current?.bullets || []).map((b, i) => (
-                                  <div
-                                    key={`${idx}-${i}`}
-                                    className="flex items-start gap-1.5"
-                                  >
-                                    <span
-                                      className="mt-1.5 shrink-0 font-black text-sm leading-none"
-                                      style={{ color: bulletAccentColor }}
+                                {(current?.bullets || []).map((b, i) => {
+                                  const editKey = `col-${idx}-${i}`;
+                                  const isEditing = editingBullet === editKey;
+                                  const numberedMatch = b.match(/^(\d+)[.)]\s+([\s\S]*)$/);
+                                  const marker = numberedMatch ? `${numberedMatch[1]}.` : "•";
+                                  const displayText = numberedMatch ? numberedMatch[2] : b;
+                                  return (
+                                    <div
+                                      key={editKey}
+                                      className="flex items-start gap-1.5"
                                     >
-                                      ▸
-                                    </span>
-                                    <textarea
-                                      defaultValue={b}
-                                      onBlur={(e) => {
-                                        const nb = [
-                                          ...(current?.bullets || []),
-                                        ];
-                                        const t = e.target.value.trim();
-                                        if (t) {
-                                          nb[i] = t;
-                                        } else {
-                                          nb.splice(i, 1);
-                                        }
-                                        patchSlide(idx, { bullets: nb });
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter")
-                                          e.currentTarget.blur();
-                                      }}
-                                      rows={1}
-                                      className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
-                                      style={{
-                                        color: contentTextColor,
-                                        fieldSizing: "content" as never,
-                                      }}
-                                    />
-                                  </div>
-                                ))}
+                                      <span
+                                        className="mt-0.5 shrink-0 font-black text-sm leading-snug"
+                                        style={{ color: bulletAccentColor }}
+                                      >
+                                        {marker}
+                                      </span>
+                                      {isEditing ? (
+                                        <textarea
+                                          autoFocus
+                                          defaultValue={b}
+                                          onBlur={(e) => {
+                                            const nb = [...(current?.bullets || [])];
+                                            const t = e.target.value.trim();
+                                            if (t) { nb[i] = t; } else { nb.splice(i, 1); }
+                                            patchSlide(idx, { bullets: nb });
+                                            setEditingBullet(null);
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") e.currentTarget.blur();
+                                            if (e.key === "Escape") setEditingBullet(null);
+                                          }}
+                                          rows={1}
+                                          className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none overflow-hidden"
+                                          style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                        />
+                                      ) : (
+                                        <div
+                                          className="text-xs md:text-sm leading-snug flex-1 cursor-text select-text"
+                                          style={{ color: contentTextColor }}
+                                          onClick={() => setEditingBullet(editKey)}
+                                        >
+                                          {renderInline(displayText)}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                               <button
                                 onClick={() =>
@@ -2084,7 +2192,7 @@ export default function Home() {
                         <div
                           className={`${
                             isNoImageSlide ? "w-full" : "flex-1"
-                          } px-5 md:px-7 py-4 flex flex-col overflow-hidden ${
+                          } px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden ${
                             isNoImageSlide
                               ? "items-center justify-center"
                               : "items-center"
@@ -2094,20 +2202,35 @@ export default function Home() {
                           {current?.content != null ? (
                             /* Upper grades: editable paragraph */
                             <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
-                              <textarea
-                                key={`content-${idx}`}
-                                defaultValue={current.content}
-                                onBlur={(e) => {
-                                  patchSlide(idx, { content: e.target.value });
-                                }}
-                                placeholder="Type here…"
-                                className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                                style={{
-                                  color: contentTextColor,
-                                  fieldSizing: "content" as never,
-                                  minHeight: "5rem",
-                                }}
-                              />
+                              {editingContent === idx ? (
+                                <textarea
+                                  autoFocus
+                                  key={`content-edit-${idx}`}
+                                  defaultValue={current.content}
+                                  onBlur={(e) => {
+                                    patchSlide(idx, { content: e.target.value });
+                                    setEditingContent(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") setEditingContent(null);
+                                  }}
+                                  placeholder="Type here…"
+                                  className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                                  style={{
+                                    color: contentTextColor,
+                                    fieldSizing: "content" as never,
+                                    minHeight: "5rem",
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className="text-sm md:text-base leading-relaxed w-full text-center cursor-text select-text"
+                                  style={{ color: contentTextColor, minHeight: "5rem" }}
+                                  onClick={() => setEditingContent(idx)}
+                                >
+                                  {renderInline(current.content)}
+                                </div>
+                              )}
                             </div>
                           ) : (
                             /* Primary grades: bullet list */
@@ -2133,46 +2256,68 @@ export default function Home() {
                                   />
                                 )}
                               <ul className="space-y-1.5 md:space-y-3">
-                                {(current?.bullets || []).map((b, i) => (
-                                  <li
-                                    key={`${idx}-${i}`}
-                                    className="flex items-start gap-2 md:gap-3"
-                                  >
-                                    <span
-                                      className="mt-1.5 shrink-0 font-black text-base md:text-xl leading-none"
-                                      style={{ color: bulletAccentColor }}
+                                {(current?.bullets || []).map((b, i) => {
+                                  const editKey = `${idx}-${i}`;
+                                  const isEditing = editingBullet === editKey;
+                                  const numberedMatch = b.match(/^(\d+)[.)]\s+([\s\S]*)$/);
+                                  const marker = numberedMatch
+                                    ? `${numberedMatch[1]}.`
+                                    : "•";
+                                  const displayText = numberedMatch ? numberedMatch[2] : b;
+                                  return (
+                                    <li
+                                      key={editKey}
+                                      className="flex items-start gap-2 md:gap-3"
                                     >
-                                      ▸
-                                    </span>
-                                    <textarea
-                                      defaultValue={b}
-                                      onBlur={(e) => {
-                                        const newBullets = [
-                                          ...(current?.bullets || []),
-                                        ];
-                                        const trimmed = e.target.value.trim();
-                                        if (trimmed) {
-                                          newBullets[i] = trimmed;
-                                        } else {
-                                          newBullets.splice(i, 1);
-                                        }
-                                        patchSlide(idx, {
-                                          bullets: newBullets,
-                                        });
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter")
-                                          e.currentTarget.blur();
-                                      }}
-                                      rows={1}
-                                      className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 font-bold resize-none overflow-hidden"
-                                      style={{
-                                        color: contentTextColor,
-                                        fieldSizing: "content" as never,
-                                      }}
-                                    />
-                                  </li>
-                                ))}
+                                      <span
+                                        className="mt-0.5 shrink-0 font-black text-base md:text-lg leading-snug"
+                                        style={{ color: bulletAccentColor }}
+                                      >
+                                        {marker}
+                                      </span>
+                                      {isEditing ? (
+                                        <textarea
+                                          autoFocus
+                                          defaultValue={b}
+                                          onBlur={(e) => {
+                                            const newBullets = [
+                                              ...(current?.bullets || []),
+                                            ];
+                                            const trimmed = e.target.value.trim();
+                                            if (trimmed) {
+                                              newBullets[i] = trimmed;
+                                            } else {
+                                              newBullets.splice(i, 1);
+                                            }
+                                            patchSlide(idx, { bullets: newBullets });
+                                            setEditingBullet(null);
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter")
+                                              e.currentTarget.blur();
+                                            if (e.key === "Escape")
+                                              setEditingBullet(null);
+                                          }}
+                                          rows={1}
+                                          className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none overflow-hidden"
+                                          style={{
+                                            color: contentTextColor,
+                                            fieldSizing: "content" as never,
+                                            fontWeight: 400,
+                                          }}
+                                        />
+                                      ) : (
+                                        <div
+                                          className="text-xs md:text-base leading-snug flex-1 cursor-text select-text"
+                                          style={{ color: contentTextColor }}
+                                          onClick={() => setEditingBullet(editKey)}
+                                        >
+                                          {renderInline(displayText)}
+                                        </div>
+                                      )}
+                                    </li>
+                                  );
+                                })}
                               </ul>
                               <button
                                 onClick={() =>
@@ -2371,16 +2516,56 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Next */}
+                {/* Next — desktop only */}
                 <button
                   onClick={next}
                   disabled={!canNext}
-                  className="comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
+                  className="hidden md:flex comic-nav-btn shrink-0 rounded-xl px-4 py-4 font-black text-xl transition-all disabled:opacity-20"
                   style={{
                     background: "#166534",
                     color: "#ffffff",
                     border: "3px solid #14532d",
                     boxShadow: "4px 4px 0 rgb(48, 47, 45)",
+                  }}
+                >
+                  →
+                </button>
+              </div>
+
+              {/* Mobile nav bar — shown only on small screens */}
+              <div className="flex md:hidden items-center justify-between mt-3 gap-2">
+                <button
+                  onClick={prev}
+                  disabled={!canPrev}
+                  className="flex-1 rounded-xl py-3 font-black text-lg transition-all disabled:opacity-20"
+                  style={{
+                    background: "#166534",
+                    color: "#ffffff",
+                    border: "3px solid #14532d",
+                    boxShadow: "3px 3px 0 rgb(48, 47, 45)",
+                  }}
+                >
+                  ←
+                </button>
+                <span
+                  className="shrink-0 px-4 py-2 rounded-xl font-black text-sm"
+                  style={{
+                    background: "rgb(48,47,45)",
+                    color: "#ffffff",
+                    border: "3px solid rgb(48,47,45)",
+                  }}
+                >
+                  {idx + 1} / {total}
+                </span>
+                <button
+                  onClick={next}
+                  disabled={!canNext}
+                  className="flex-1 rounded-xl py-3 font-black text-lg transition-all disabled:opacity-20"
+                  style={{
+                    background: "#166534",
+                    color: "#ffffff",
+                    border: "3px solid #14532d",
+                    boxShadow: "3px 3px 0 rgb(48, 47, 45)",
                   }}
                 >
                   →
@@ -2476,6 +2661,114 @@ export default function Home() {
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Dev debug panel (localhost only) ─────────────────────────────── */}
+      {debugInfo && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: "#0f172a",
+            color: "#e2e8f0",
+            fontFamily: "monospace",
+            fontSize: "12px",
+            maxHeight: debugOpen ? "50vh" : "36px",
+            transition: "max-height 0.2s ease",
+            overflow: "hidden",
+            borderTop: "2px solid #334155",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Header bar */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "6px 12px",
+              background: "#1e293b",
+              borderBottom: debugOpen ? "1px solid #334155" : "none",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+            onClick={() => setDebugOpen((o) => !o)}
+          >
+            <span style={{ color: "#22d3ee", fontWeight: "bold" }}>DEV</span>
+            <span style={{ color: "#94a3b8" }}>
+              {debugInfo.topicStructure.topicType} · {debugInfo.topicStructure.structureItems.length} structure items · {debugInfo.ragLessons.length} RAG lessons
+            </span>
+            <span style={{ marginLeft: "auto", color: "#64748b" }}>{debugOpen ? "▼ collapse" : "▲ expand"}</span>
+          </div>
+
+          {/* Tabs */}
+          {debugOpen && (
+            <div style={{ display: "flex", gap: 0, background: "#1e293b", borderBottom: "1px solid #334155", flexShrink: 0 }}>
+              {(["rag", "prompt", "deck"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setDebugTab(tab)}
+                  style={{
+                    padding: "5px 16px",
+                    background: debugTab === tab ? "#0f172a" : "transparent",
+                    color: debugTab === tab ? "#22d3ee" : "#94a3b8",
+                    border: "none",
+                    borderBottom: debugTab === tab ? "2px solid #22d3ee" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontFamily: "monospace",
+                    fontSize: "12px",
+                    fontWeight: debugTab === tab ? "bold" : "normal",
+                  }}
+                >
+                  {tab === "rag" ? `RAG (${debugInfo.ragLessons.length})` : tab === "prompt" ? "Prompt" : "Deck JSON"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Content */}
+          {debugOpen && (
+            <div style={{ overflow: "auto", padding: "12px", flex: 1 }}>
+              {debugTab === "rag" && (
+                <div>
+                  <div style={{ color: "#94a3b8", marginBottom: "8px" }}>
+                    Topic type: <span style={{ color: "#fbbf24" }}>{debugInfo.topicStructure.topicType}</span>
+                    {debugInfo.topicStructure.structureItems.length > 0 && (
+                      <span> · Items: <span style={{ color: "#a3e635" }}>{debugInfo.topicStructure.structureItems.join(", ")}</span></span>
+                    )}
+                  </div>
+                  {debugInfo.ragLessons.length === 0 ? (
+                    <div style={{ color: "#64748b" }}>No RAG lessons retrieved (Neo4j not configured or topic not in curriculum).</div>
+                  ) : (
+                    debugInfo.ragLessons.map((l, i) => (
+                      <div key={i} style={{ marginBottom: "10px", borderLeft: "2px solid #334155", paddingLeft: "10px" }}>
+                        <div style={{ color: "#22d3ee" }}>Dars {l.lessonNumber}: {l.title}</div>
+                        <div style={{ color: "#64748b" }}>{l.chapter} · score: {l.score.toFixed(4)}</div>
+                        <div style={{ color: "#cbd5e1", marginTop: "4px", whiteSpace: "pre-wrap" }}>{l.content}</div>
+                      </div>
+                    ))
+                  )}
+                  {debugInfo.ragContext && (
+                    <div style={{ marginTop: "12px", borderTop: "1px solid #334155", paddingTop: "8px" }}>
+                      <div style={{ color: "#94a3b8", marginBottom: "4px" }}>Compressed context injected into prompt:</div>
+                      <pre style={{ whiteSpace: "pre-wrap", color: "#a3e635" }}>{debugInfo.ragContext}</pre>
+                    </div>
+                  )}
+                </div>
+              )}
+              {debugTab === "prompt" && (
+                <pre style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{debugInfo.prompt}</pre>
+              )}
+              {debugTab === "deck" && (
+                <pre style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{debugInfo.rawCompletion}</pre>
+              )}
+            </div>
+          )}
         </div>
       )}
     </main>

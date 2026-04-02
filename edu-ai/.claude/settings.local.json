@@ -8,8 +8,13 @@
       "Bash(taskkill /f /im node.exe)",
       "Bash(taskkill //f //im node.exe)",
       "Bash(npx tsc:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(find 'C:\\\\Users\\\\hp\\\\Desktop\\\\edu startup\\\\edu-ai' -not -path */node_modules/* -not -path */.next/* -type d)",
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(mkdir -p \"C:/Users/hp/Desktop/edu startup/edu-ai/src/app/api/debug/rag\")",
+      "Bash(mkdir -p \"C:/Users/hp/Desktop/edu startup/edu-ai/src/app/rag-debug\")"
     ]
   }
 }
-
