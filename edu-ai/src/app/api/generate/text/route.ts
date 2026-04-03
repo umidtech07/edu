@@ -14,45 +14,45 @@ function buildCategorySlideSequence(
   switch (topicType) {
     case "collection": {
       const items = structureItems.slice(0, 6);
-      const itemLines = items.length > 0
-        ? items.map((item, i) => `  ${i + 3}. fact or explanation — "${item}"`).join("\n")
-        : `  3–8. fact or explanation — one slide per subject`;
       const compSlide = items.length + 3;
+      const itemLines = items.length > 0
+        ? items.map((item, i) => `  ${i + 3}. fact or explanation — "${item}"`).join("\n") +
+          `\n  ${compSlide <= 9 ? compSlide : 9}. comparison — two most contrasting subjects`
+        : `  3–8. fact or explanation — one slide per subject\n  9. comparison — two most contrasting subjects`;
       return `Slide sequence — COLLECTION (exactly 10 slides):
   1. intro
   2. columns (MANDATORY) — one card per subject; ${COLUMNS_CARD}
 ${itemLines}
-  ${compSlide <= 9 ? compSlide : 9}. comparison — two most contrasting subjects
   10. recap`;
     }
 
     case "process": {
       const items = structureItems.slice(0, 5);
-      const stepLines = items.length > 0
-        ? items.map((step, i) => `  ${i + 4}. explanation — step ${i + 1}: "${step}"`).join("\n")
-        : `  4–8. explanation — one slide per step`;
       const quizSlide = items.length + 4;
+      const stepLines = items.length > 0
+        ? items.map((step, i) => `  ${i + 4}. explanation — step ${i + 1}: "${step}"`).join("\n") +
+          `\n  ${quizSlide <= 9 ? quizSlide : 9}. quiz (no image)`
+        : `  4–8. explanation — one slide per step\n  9. quiz (no image)`;
       return `Slide sequence — PROCESS (exactly 10 slides):
   1. intro
   2. explanation — overview
   3. columns (MANDATORY) — 3–4 stages as cards; ${COLUMNS_CARD}
 ${stepLines}
-  ${quizSlide <= 9 ? quizSlide : 9}. quiz (no image)
   10. recap`;
     }
 
     case "narrative": {
       const items = structureItems.slice(0, 5);
-      const phaseLines = items.length > 0
-        ? items.map((phase, i) => `  ${i + 4}. ${i % 2 === 0 ? "explanation" : "fact"} — "${phase}"`).join("\n")
-        : `  4–8. explanation or fact — one slide per phase/milestone`;
       const reflectSlide = items.length + 4;
+      const phaseLines = items.length > 0
+        ? items.map((phase, i) => `  ${i + 4}. ${i % 2 === 0 ? "explanation" : "fact"} — "${phase}"`).join("\n") +
+          `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
+        : `  4–8. explanation or fact — one slide per phase/milestone\n  9. reflection (no image)`;
       return `Slide sequence — NARRATIVE (exactly 10 slides):
   1. intro
   2. explanation — historical context
   3. columns (MANDATORY) — 3–4 key people/places/milestones as cards; ${COLUMNS_CARD}
 ${phaseLines}
-  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)
   10. recap`;
     }
 
@@ -75,18 +75,18 @@ ${phaseLines}
 
     case "cause-effect": {
       const items = structureItems.slice(0, 4);
-      const causeLines = items.length > 0
-        ? items.map((item, i) => `  ${i + 4}. ${i < Math.ceil(items.length / 2) ? "explanation" : "fact"} — "${item}"`).join("\n")
-        : `  4–7. explanation or fact — one slide per cause or effect`;
       const compSlide = items.length + 4;
       const reflectSlide = items.length + 5;
+      const causeLines = items.length > 0
+        ? items.map((item, i) => `  ${i + 4}. ${i < Math.ceil(items.length / 2) ? "explanation" : "fact"} — "${item}"`).join("\n") +
+          `\n  ${compSlide <= 8 ? compSlide : 8}. comparison — key cause vs. key effect` +
+          `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
+        : `  4–7. explanation or fact — one slide per cause or effect\n  8. comparison — key cause vs. key effect\n  9. reflection (no image)`;
       return `Slide sequence — CAUSE-EFFECT (exactly 10 slides):
   1. intro
   2. explanation — background context
   3. columns (MANDATORY) — 3–4 main causes as cards; ${COLUMNS_CARD}
 ${causeLines}
-  ${compSlide <= 8 ? compSlide : 8}. comparison — key cause vs. key effect
-  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)
   10. recap`;
     }
 
@@ -342,6 +342,7 @@ Content rules:
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
       temperature: 0.6,
+      max_tokens: isPrimary ? 2500 : 4000,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "Return strict JSON only." },
@@ -367,6 +368,7 @@ Content rules:
     const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
 
     const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
+      .filter((s: any) => s != null)
       .slice(0, effectiveSlideCount)
       .map((s: any) => {
         // Normalize slideType: lowercase + trim so AI variants like "Comparison" still match

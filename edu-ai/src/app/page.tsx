@@ -527,6 +527,8 @@ export default function Home() {
     setDeck(null);
     setIdx(0);
     setPastedImages({});
+    setDebugInfo(null);
+    setDebugOpen(false);
 
     try {
       // ── Step 1: OpenAI text (~2–3 s) — show slides immediately ────────────
@@ -2191,14 +2193,47 @@ export default function Home() {
                         {/* Text content */}
                         <div
                           className={`${
-                            isNoImageSlide ? "w-full" : "flex-1"
-                          } px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden ${
-                            isNoImageSlide
+                            isNoImageSlide || (!displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx)) ? "w-full" : "flex-1"
+                          } relative px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden ${
+                            isNoImageSlide || (!displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx))
                               ? "items-center justify-center"
                               : "items-center"
                           }`}
                           style={{ background: contentBg }}
                         >
+                          {/* Paste image button — shown at right edge when no image */}
+                          {!isNoImageSlide && !displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx) && (
+                            <div
+                              className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer group"
+                              style={{ zIndex: 10 }}
+                              tabIndex={0}
+                              onPaste={(e) => handleImagePaste(e, idx)}
+                              title="Click here and paste an image (Ctrl+V)"
+                            >
+                              <div
+                                className="flex flex-col items-center gap-1 px-1.5 py-3 rounded-l-lg transition-all"
+                                style={{
+                                  background: "#f1f5f9",
+                                  border: "2px solid #e2e8f0",
+                                  borderRight: "none",
+                                  color: "#94a3b8",
+                                }}
+                              >
+                                <span className="text-sm select-none">📎</span>
+                                <span
+                                  className="text-[8px] font-black leading-tight"
+                                  style={{
+                                    writingMode: "vertical-rl",
+                                    textOrientation: "mixed",
+                                    transform: "rotate(180deg)",
+                                    color: "#94a3b8",
+                                  }}
+                                >
+                                  Paste image
+                                </span>
+                              </div>
+                            </div>
+                          )}
                           {current?.content != null ? (
                             /* Upper grades: editable paragraph */
                             <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
@@ -2400,6 +2435,33 @@ export default function Home() {
                                       Paste to replace (Ctrl+V)
                                     </span>
                                   </div>
+                                  {/* Remove image button */}
+                                  <button
+                                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-full text-[10px] font-black leading-none"
+                                    style={{
+                                      width: 18,
+                                      height: 18,
+                                      background: "#dc2626",
+                                      color: "#fff",
+                                      border: "2px solid #fff",
+                                      zIndex: 20,
+                                    }}
+                                    title="Remove image"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (pastedEntry) {
+                                        setPastedImages((prev) => {
+                                          const next = { ...prev };
+                                          delete next[idx];
+                                          return next;
+                                        });
+                                      } else {
+                                        patchSlide(idx, { image: null, imageSource: null, imageCredit: null, imageCreditUrl: null });
+                                      }
+                                    }}
+                                  >
+                                    ×
+                                  </button>
                                 </div>
                               ) : imagesLoading ||
                                 stabilitySlides.has(idx) ||

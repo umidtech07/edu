@@ -24,6 +24,13 @@ const BLOCKED_TERMS = [
   "woman", "women", "lady", "ladies", "girl", "female", "man", "men",
   "person", "people", "model", "portrait", "pose", "posing", "fashion",
   "blogger", "influencer", "makeup", "beauty", "selfie",
+  // Beach/outdoor scenes with people
+  "beach people", "people beach", "beach crowd", "crowd beach",
+  "sunbather", "sunbathing", "sunbathe", "tanning", "beachgoer",
+  "swimmer", "swimming", "surfer", "surfing", "volleyball",
+  "tourist", "tourists", "vacation", "holiday", "traveler",
+  "couple", "family", "friends", "kid", "kids", "child", "children",
+  "boy", "boys", "teen", "teenager",
 ];
 
 export function isBlockedCandidate(candidate: PhotoCandidate): boolean {
