@@ -376,7 +376,7 @@ export async function POST(req: Request) {
       ? hasCyrillic
         ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Russian.${imageQueryEnglishRule}`
         : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Uzbek (Latin script).${imageQueryEnglishRule}`
-      : `\n- Look at the WRITTEN SCRIPT of the topic text itself (not the subject matter). Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in that same written language. IMPORTANT: If the topic is written using Latin/English characters (e.g. "the timurid empire", "photosynthesis"), respond entirely in English — even if the subject is historically associated with another culture or region.${imageQueryEnglishRule}`;
+      : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in English. This rule is ABSOLUTE — do not use French, Spanish, German, or any other language regardless of how the topic is written.${imageQueryEnglishRule}`;
 
     const boldInstruction = buildBoldInstruction(safeTopicType);
 
