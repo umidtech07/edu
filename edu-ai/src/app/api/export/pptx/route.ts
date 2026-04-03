@@ -5,6 +5,19 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const maxRequestBodySize = "50mb";
 
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*\*(.+?)\*\*\*/gs, "$1")
+    .replace(/___(.+?)___/gs, "$1")
+    .replace(/\*\*(.+?)\*\*/gs, "$1")
+    .replace(/__(.+?)__/gs, "$1")
+    .replace(/\*(.+?)\*/gs, "$1")
+    .replace(/_(.+?)_/gs, "$1")
+    .replace(/~~(.+?)~~/gs, "$1")
+    .replace(/`{1,3}([^`]+)`{1,3}/gs, "$1")
+    .replace(/^#{1,6}\s+/gm, "");
+}
+
 type Slide = {
   title: string;
   bullets: string[];
@@ -55,7 +68,7 @@ export async function POST(req: Request) {
       slide.background = { color: "FFFFFF" };
 
       // Title
-      slide.addText(s.title || "", {
+      slide.addText(stripMarkdown(s.title || ""), {
         x: 0.7, y: 0.5, w: 12, h: 0.7,
         fontFace: "Segoe UI Emoji",
         fontSize: 32,
@@ -65,7 +78,7 @@ export async function POST(req: Request) {
 
       // Text content (left): paragraph for upper grades, bullets for primary
       if (s.content) {
-        slide.addText(s.content, {
+        slide.addText(stripMarkdown(s.content), {
           x: 0.9,
           y: 1.5,
           w: 6.2,
@@ -78,7 +91,7 @@ export async function POST(req: Request) {
       } else {
         slide.addText(
           (s.bullets || []).map((b) => ({
-            text: b,
+            text: stripMarkdown(b),
             options: { bullet: true }
           })),
           {

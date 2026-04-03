@@ -43,9 +43,23 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await r.arrayBuffer());
 }
 
+/** Strip markdown formatting markers (bold, italic, code, etc.) from text. */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*\*(.+?)\*\*\*/gs, "$1")   // bold+italic ***
+    .replace(/___(.+?)___/gs, "$1")           // bold+italic ___
+    .replace(/\*\*(.+?)\*\*/gs, "$1")         // bold **
+    .replace(/__(.+?)__/gs, "$1")             // bold __
+    .replace(/\*(.+?)\*/gs, "$1")             // italic *
+    .replace(/_(.+?)_/gs, "$1")               // italic _
+    .replace(/~~(.+?)~~/gs, "$1")             // strikethrough
+    .replace(/`{1,3}([^`]+)`{1,3}/gs, "$1")  // inline code
+    .replace(/^#{1,6}\s+/gm, "");             // headings
+}
+
 /** Normalize punctuation to plain equivalents. Noto Sans covers Cyrillic/Latin so we no longer strip non-Latin chars. */
 function sanitize(text: string): string {
-  return text
+  return stripMarkdown(text)
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")   // curly single quotes
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')    // curly double quotes
     .replace(/\u2013/g, "-")                        // en dash
