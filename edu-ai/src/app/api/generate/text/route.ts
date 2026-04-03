@@ -211,6 +211,113 @@ function safeJsonParse(text: string) {
   return null;
 }
 
+// ── Phase 1: Outline prompt ────────────────────────────────────────────────
+// Generates slide titles, slideTypes, imageQueries, and columns cards.
+// Keeps the prompt focused on structure — content is deferred to phase 2.
+
+function buildOutlinePrompt(params: {
+  topic: string;
+  grade: string;
+  curriculum: string;
+  curriculumContext: string;
+  categorySlideSequence: string;
+  effectiveSlideCount: number;
+  isUzbekCurriculum: boolean;
+  hasCyrillic: boolean;
+}): string {
+  const {
+    topic, grade, curriculum, curriculumContext,
+    categorySlideSequence, effectiveSlideCount,
+    isUzbekCurriculum, hasCyrillic,
+  } = params;
+
+  const imageQueryEnglishRule = `\n- imageQuery MUST be in English (stock photo API). ✓ "volcano eruption lava flow"  ✗ "vulqon otilishi"`;
+
+  const titleLanguageNote = isUzbekCurriculum
+    ? hasCyrillic
+      ? `Generate deckTitle and slide titles in Russian.${imageQueryEnglishRule}`
+      : `Generate deckTitle and slide titles in Uzbek (Latin script).${imageQueryEnglishRule}`
+    : `Detect topic language; generate deckTitle and slide titles in that language.${imageQueryEnglishRule}`;
+
+  return `Outline a ${effectiveSlideCount}-slide lesson deck.
+
+Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}${curriculumContext ? `\n\nCurriculum context:\n${curriculumContext}` : ""}
+
+${categorySlideSequence}
+
+Return ONLY valid JSON:
+{"deckTitle":"string","slides":[{"title":"string","slideType":"string","imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null}]}
+
+Rules:
+- slideType: intro|explanation|example|fact|comparison|columns|reflection|question|quiz|recap
+- MANDATORY columns: where sequence marks "columns (MANDATORY)", use slideType "columns", add "columns":[{"label":"string","description":"string","imageQuery":"string|null"}]; top-level imageQuery null
+- quiz/reflection/question/recap/columns: imageQuery, imageStrategy, visualType all null
+- Every visual slide: unique imageQuery in English, 3–6 words; "literal"=concrete noun phrase; "metaphor"=vivid scene for abstract concept
+- "visualType": "diagram" for timelines/cycles/cross-sections/anatomy/maps; "photo" for real objects/people/places
+- ${titleLanguageNote}`;
+}
+
+// ── Phase 2: Per-slide content prompt ─────────────────────────────────────
+// Called in parallel for every non-columns slide.
+// Receives the full deck outline as context for coherence.
+// ragContext slot is empty now — Graph RAG will populate it per slide later.
+
+function buildSlideContentPrompt(params: {
+  slide: { title: string; slideType: string };
+  slideIndex: number;
+  totalSlides: number;
+  topic: string;
+  grade: string;
+  deckTitle: string;
+  outlineSummary: string;
+  otherSlideTitles: string[];
+  isPrimary: boolean;
+  boldInstruction: string;
+  formulaInstruction: string;
+  languageInstruction: string;
+  ragContext?: string; // reserved for Graph RAG integration
+}): string {
+  const {
+    slide, slideIndex, totalSlides, topic, grade, deckTitle,
+    outlineSummary, otherSlideTitles, isPrimary, boldInstruction, formulaInstruction,
+    languageInstruction, ragContext,
+  } = params;
+
+  const isComparison = slide.slideType === "comparison";
+
+  const schemaHint = isPrimary
+    ? isComparison
+      ? `{"sideALabel":"string","sideBLabel":"string","sideABullets":["string"],"sideBBullets":["string"]}`
+      : `{"bullets":["string","string","string"]}`
+    : isComparison
+    ? `{"sideALabel":"string","sideBLabel":"string","sideAContent":"string","sideBContent":"string"}`
+    : `{"content":"string"}`;
+
+  const contentRules = isPrimary
+    ? isComparison
+      ? `- sideABullets and sideBBullets: 2–3 bullets each, max 12 words, child-friendly, about DIFFERENT things`
+      : `- bullets: 3–5 items, max 12 words each, child-friendly language`
+    : isComparison
+    ? `- sideAContent and sideBContent: 2–3 rich sentences each about DIFFERENT things; use **bold** and *italics* for key terms`
+    : `- content: 5–6 sentences; use **bold** for key terms, *italics* for emphasis; mix prose with short fragments; include concrete examples, data, or surprising facts`;
+
+  const avoidList = otherSlideTitles.length > 0
+    ? `\nANTI-REPETITION — Do NOT cover these topics (they belong to other slides):\n${otherSlideTitles.map(t => `  • ${t}`).join("\n")}\nWrite ONLY about what is unique to "${slide.title}". Every fact, example, and sentence must be specific to this slide's angle — do not restate generic topic introductions.`
+    : "";
+
+  return `Write content for slide ${slideIndex + 1}/${totalSlides} in a lesson deck.
+
+Deck: "${deckTitle}" | Topic: ${topic}${grade ? ` | Grade: ${grade}` : ""}
+This slide: "${slide.title}" (type: ${slide.slideType})
+${avoidList}
+Deck outline (reference only):
+${outlineSummary}
+${ragContext ? `\nCurriculum context:\n${ragContext}` : ""}
+Return ONLY valid JSON: ${schemaHint}
+
+${contentRules}${boldInstruction}${formulaInstruction}${languageInstruction}`;
+}
+
 export async function POST(req: Request) {
   try {
     const {
@@ -244,8 +351,6 @@ export async function POST(req: Request) {
     const effectiveSlideCount = slideCount;
 
     // ── Topic structure pre-pass ───────────────────────────────────────────────
-    // Classify the topic and extract structural items (subjects, steps, phases, etc.)
-    // so the main prompt can enforce coverage diversity / ordering.
     const topicStructure = await detectTopicStructure(topic);
     const VALID_TOPIC_TYPES = ["collection", "process", "narrative", "comparison", "cause-effect", "formula", "single-subject"];
     const safeTopicType = VALID_TOPIC_TYPES.includes(topicStructure.topicType)
@@ -256,9 +361,6 @@ export async function POST(req: Request) {
     const categorySlideSequence = buildCategorySlideSequence(safeTopicType, structureItems, isPrimary);
 
     // ── Language handling ──────────────────────────────────────────────────────
-    // "O'zbekiston MMTV" curriculum forces Uzbek/Russian output regardless of topic language.
-    // For all other curricula, OpenAI auto-detects the topic language and responds in kind.
-    // imageQuery is ALWAYS English so Pexels/Unsplash/Pixabay search works correctly.
     const isUzbekCurriculum = curriculum.replace(/[''']/g, "'").includes("O'zbekiston");
 
     // ── Curriculum RAG (O'zbekiston DTS only for now) ──────────────────────
@@ -274,18 +376,7 @@ export async function POST(req: Request) {
       ? hasCyrillic
         ? `\n- The topic is written in Russian. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Russian.${imageQueryEnglishRule}`
         : `\n- Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in Uzbek (Latin script).${imageQueryEnglishRule}`
-      : `\n- Detect the language of the topic. Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in that same language. If the topic is in English, respond in English.${imageQueryEnglishRule}`;
-
-    const visualTypeRule = `
-- "visualType": "diagram" for cross-sections/timelines/cycles/anatomy/maps; "photo" for real objects/places/people; null for quiz/reflection/recap/columns.
-- "imageStrategy" (photo only): "literal" = concrete thing a camera captures directly; "metaphor" = abstract concept shown as a vivid visual scene; null when visualType is diagram/null.`;
-
-    const slideTypeRule = `
-- "slideType": one of: "intro"|"explanation"|"example"|"fact"|"comparison"|"columns"|"reflection"|"question"|"quiz"|"recap"
-  - "comparison": MUST include sideALabel, sideBLabel, and sideABullets+sideBBullets (primary) or sideAContent+sideBContent (secondary) — each side a DIFFERENT thing.
-  - "columns": MUST include "columns" array of 2–4 objects: {"label":"string","description":"string","imageQuery":"string"}. Top-level imageQuery null. No bullets/content field.
-  - MANDATORY columns: wherever the sequence marks "columns (MANDATORY)", output slideType:"columns" — never substitute another type.
-  - "reflection", "question", "quiz", "recap", "columns": imageQuery, imageStrategy, visualType MUST all be null.`;
+      : `\n- Look at the WRITTEN SCRIPT of the topic text itself (not the subject matter). Generate ALL slide text fields (deckTitle, title, bullets, content, sideALabel, sideBLabel, sideABullets, sideBBullets, sideAContent, sideBContent, and each column's label and description) in that same written language. IMPORTANT: If the topic is written using Latin/English characters (e.g. "the timurid empire", "photosynthesis"), respond entirely in English — even if the subject is historically associated with another culture or region.${imageQueryEnglishRule}`;
 
     const boldInstruction = buildBoldInstruction(safeTopicType);
 
@@ -298,69 +389,106 @@ export async function POST(req: Request) {
 - NEVER use slideType "fact" — this is a formula topic. Every content slide must be "explanation" or "example". Slides with slideType "fact" will be rejected.`
       : "";
 
-    const imageQueryUniquenessRule = `
-- Every visual slide MUST have a non-null imageQuery — unique scene/subject/angle per slide, never the same concept twice across the deck.
-- "literal": precise noun phrase for the concrete thing on that slide (e.g. "monarch butterfly on orange flower").
-- "metaphor": vivid scene representing an abstract concept (e.g. for momentum: "freight train speeding through mountain tunnel at night").
-- Avoid: single-word queries, "students learning", "teacher in classroom", generic clichés.`;
+    // ── Phase 1: Generate outline ──────────────────────────────────────────────
+    // Returns titles, slideTypes, imageQueries, and columns cards for all slides.
+    const outlinePrompt = buildOutlinePrompt({
+      topic,
+      grade,
+      curriculum,
+      curriculumContext,
+      categorySlideSequence,
+      effectiveSlideCount,
+      isUzbekCurriculum,
+      hasCyrillic,
+    });
 
-    const prompt = isPrimary
-      ? `Create a ${effectiveSlideCount}-slide lesson deck for young students (grades 1–4).
-
-Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
-
-Return ONLY valid JSON:
-{"deckTitle":"string","slides":[{"title":"string","bullets":["string"],"imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"columns"|"reflection"|"question"|"quiz"|"recap","columns":[{"label":"string","description":"string","imageQuery":"string"}]}]}
-
-${categorySlideSequence}
-
-Content rules:
-- Very simple and child-friendly language
-- Bullets: max 12 words each, 3–5 bullets per slide
-- ALL intro, explanation, example, fact, and comparison slides MUST have a non-null imageQuery; only reflection, question, quiz, and recap slides have imageQuery: null
-- When imageQuery is null, imageStrategy and visualType must also be null
-- EVERY slide MUST have a non-empty "bullets" array with 3–5 bullets — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "bullets" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideABullets" (2–3 bullets about thing A), "sideBBullets" (2–3 bullets about thing B). Each side MUST describe a DIFFERENT thing or perspective.${boldInstruction}${imageQueryUniquenessRule}${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${curriculumContext}${formulaInstruction}${languageInstruction}`
-      : `Create a ${effectiveSlideCount}-slide lesson deck for upper-grade students (grades 5–8).
-
-Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}
-
-Return ONLY valid JSON:
-{"deckTitle":"string","slides":[{"title":"string","content":"string","imageQuery":"string|null","imageStrategy":"literal"|"metaphor"|null,"visualType":"photo"|"diagram"|null,"slideType":"intro"|"explanation"|"example"|"fact"|"comparison"|"columns"|"reflection"|"question"|"quiz"|"recap","columns":[{"label":"string","description":"string","imageQuery":"string"}]}]}
-
-${categorySlideSequence}
-
-Content rules:
-- "content" must be **5–6 sentences** for every slide — no shorter, no longer. Be creative and expressive: use **bold** for key terms, *italics* for emphasis or examples, and feel free to break the content into short indented sub-points or a mini-list when that helps clarity. Mix narrative prose with structured fragments — vary the format slide to slide so the deck feels alive.
-- Use subject-specific vocabulary appropriate for the grade level
-- Include concrete examples, data, vivid analogies, or surprising facts to make content memorable
-- ALL intro, explanation, example, fact, and comparison slides MUST have a non-null imageQuery; only reflection, question, quiz, and recap slides have imageQuery: null
-- When imageQuery is null, imageStrategy and visualType must also be null
-- EVERY slide MUST have a non-empty "content" field — no exceptions, including quiz, reflection, question, and recap slides
-- For "comparison" slides: omit "content" and instead add "sideALabel" (name of thing A), "sideBLabel" (name of thing B), "sideAContent" (2–3 rich sentences about thing A with bold/italic where helpful), "sideBContent" (2–3 rich sentences about thing B with bold/italic where helpful). Each side MUST describe a DIFFERENT thing or perspective.${boldInstruction}${imageQueryUniquenessRule}${visualTypeRule}${slideTypeRule}${curriculum ? `\n- Follow ${curriculum} curriculum terminology and objectives` : ""}${curriculumContext}${formulaInstruction}${languageInstruction}`;
-
-    const completion = await openai.chat.completions.create({
+    const outlineCompletion = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
-      temperature: 0.6,
-      max_tokens: isPrimary ? 2500 : 4000,
+      temperature: 0.4,
+      max_tokens: 1400,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "Return strict JSON only." },
-        { role: "user", content: prompt },
+        { role: "user", content: outlinePrompt },
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "";
-    const debugRawCompletion = raw;
-    const parsed = safeJsonParse(raw);
+    const outlineRaw = outlineCompletion.choices[0]?.message?.content ?? "";
+    const outlineParsed = safeJsonParse(outlineRaw);
 
-    if (!parsed?.slides) {
+    if (!outlineParsed?.slides) {
       return NextResponse.json(
-        { error: "Invalid JSON from OpenAI" },
+        { error: "Invalid JSON from OpenAI (outline)" },
         { status: 500 }
       );
     }
 
+    // ── Phase 2: Generate content per slide (parallel) ────────────────────────
+    // columns slides are fully generated in phase 1 — skip them here.
+    // The outline summary gives each call enough context to avoid repetition.
+    const outlineSummary = (outlineParsed.slides as any[])
+      .map((s: any, i: number) => `${i + 1}. ${s.title} [${s.slideType}]`)
+      .join("\n");
+
+    let debugSampleContentPrompt: string | null = null;
+
+    const contentResults = await Promise.all(
+      (outlineParsed.slides as any[]).map((slide: any, i: number) => {
+        if (slide.slideType === "columns") return Promise.resolve({});
+
+        const otherSlideTitles = (outlineParsed.slides as any[])
+          .filter((_: any, j: number) => j !== i && (outlineParsed.slides as any[])[j].slideType !== "columns")
+          .map((s: any) => s.title as string);
+
+        const prompt = buildSlideContentPrompt({
+          slide,
+          slideIndex: i,
+          totalSlides: (outlineParsed.slides as any[]).length,
+          topic,
+          grade,
+          deckTitle: outlineParsed.deckTitle,
+          outlineSummary,
+          otherSlideTitles,
+          isPrimary,
+          boldInstruction,
+          formulaInstruction,
+          languageInstruction,
+          ragContext: curriculumContext || undefined,
+        });
+
+        // Store first non-columns prompt for debug output
+        if (debug && debugSampleContentPrompt === null) {
+          debugSampleContentPrompt = prompt;
+        }
+
+        return openai.chat.completions.create({
+          model: "gpt-4.1-nano",
+          temperature: 0.9,
+          max_tokens: isPrimary ? 500 : 900,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "Return strict JSON only." },
+            { role: "user", content: prompt },
+          ],
+        })
+          .then((r) => safeJsonParse(r.choices[0]?.message?.content ?? "") ?? {})
+          .catch((err) => {
+            console.error(`Slide ${i + 1} content error:`, err);
+            return {};
+          });
+      })
+    );
+
+    // ── Merge outline + content → same shape as before ────────────────────────
+    // The merged slides match the structure the post-processing block expects.
+    const mergedSlides = (outlineParsed.slides as any[]).map(
+      (outlineSlide: any, i: number) => ({ ...outlineSlide, ...contentResults[i] })
+    );
+
+    // Treat as `parsed` so the post-processing block below is unchanged.
+    const parsed = { deckTitle: outlineParsed.deckTitle, slides: mergedSlides };
+
+    // ── Post-processing (unchanged) ────────────────────────────────────────────
     const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","columns","reflection","question","quiz","recap"];
     const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap","columns"]);
     // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false", "Comparison")
@@ -575,8 +703,9 @@ Content rules:
           topicStructure: { topicType: safeTopicType, structureItems },
           ragLessons: debugRagLessons,
           ragContext: curriculumContext || null,
-          prompt,
-          rawCompletion: debugRawCompletion,
+          outlinePrompt,
+          sampleContentPrompt: debugSampleContentPrompt,
+          outlineRaw,
         },
       }),
     });

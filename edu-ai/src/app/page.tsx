@@ -6,24 +6,41 @@ import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import type { User } from "firebase/auth";
 import { trackEvent } from "@/lib/track";
 
-/** Parse **bold**, *italic*, __bold__ inline markers into React nodes */
+/** Parse **bold**, *italic*, __bold__, _italic_, ~~strike~~ inline markers + \n line breaks into React nodes */
 function renderInline(text: string): React.ReactNode {
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|__(.+?)__)/g;
+  // Order matters: **bold** before *italic*, ~~strike~~ standalone
+  const regex = /(\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|_(.+?)_)/gs;
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;
   while ((m = regex.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m.index > last) {
+      const raw = text.slice(last, m.index);
+      raw.split("\n").forEach((line, i) => {
+        if (i > 0) parts.push(<br key={k++} />);
+        if (line) parts.push(line);
+      });
+    }
     if (m[2] !== undefined)
       parts.push(<strong key={k++} style={{ fontWeight: 700 }}>{m[2]}</strong>);
     else if (m[3] !== undefined)
-      parts.push(<em key={k++}>{m[3]}</em>);
+      parts.push(<strong key={k++} style={{ fontWeight: 700 }}>{m[3]}</strong>);
     else if (m[4] !== undefined)
-      parts.push(<strong key={k++} style={{ fontWeight: 700 }}>{m[4]}</strong>);
+      parts.push(<s key={k++}>{m[4]}</s>);
+    else if (m[5] !== undefined)
+      parts.push(<em key={k++}>{m[5]}</em>);
+    else if (m[6] !== undefined)
+      parts.push(<em key={k++}>{m[6]}</em>);
     last = m.index + m[0].length;
   }
-  if (last < text.length) parts.push(text.slice(last));
+  if (last < text.length) {
+    const raw = text.slice(last);
+    raw.split("\n").forEach((line, i) => {
+      if (i > 0) parts.push(<br key={k++} />);
+      if (line) parts.push(line);
+    });
+  }
   return parts.length ? parts : text;
 }
 
@@ -245,6 +262,7 @@ export default function Home() {
   const [editingBullet, setEditingBullet] = useState<string | null>(null);
   // tracks which slide's content paragraph is being edited
   const [editingContent, setEditingContent] = useState<number | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   // responsive breakpoint for inline-style-driven layouts
   const [isMobile, setIsMobile] = useState(false);
@@ -1590,6 +1608,7 @@ export default function Home() {
                             }}
                           >
                             {/* Column image */}
+                            {col.image || imagesLoading || stabilityColKeys.has(`${idx}:${colIdx}`) ? (
                             <div
                               className="shrink-0 relative overflow-hidden group"
                               style={{
@@ -1636,8 +1655,31 @@ export default function Home() {
                                       Paste to replace (Ctrl+V)
                                     </span>
                                   </div>
+                                  {/* Remove column image button */}
+                                  <button
+                                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-full text-[10px] font-black leading-none"
+                                    style={{
+                                      width: 18,
+                                      height: 18,
+                                      background: "#dc2626",
+                                      color: "#fff",
+                                      border: "2px solid #fff",
+                                      zIndex: 20,
+                                    }}
+                                    title="Remove image"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      patchSlide(idx, {
+                                        columns: (current.columns ?? []).map((c, ci) =>
+                                          ci === colIdx ? { ...c, image: null, imageCredit: undefined } : c
+                                        ),
+                                      });
+                                    }}
+                                  >
+                                    ×
+                                  </button>
                                 </>
-                              ) : imagesLoading || stabilityColKeys.has(`${idx}:${colIdx}`) ? (
+                              ) : (
                                 <div
                                   className="w-full h-full flex items-center justify-center animate-pulse"
                                   style={{ background: "#f1f5f9" }}
@@ -1647,16 +1689,6 @@ export default function Home() {
                                     style={{ color: "#94a3b8" }}
                                   >
                                     {stabilityColKeys.has(`${idx}:${colIdx}`) ? "Generating AI image…" : "Loading…"}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div
-                                  className="w-full h-full flex flex-col items-center justify-center gap-0.5 cursor-pointer"
-                                  style={{ background: "#f9fafb", border: "2px dashed #d1d5db" }}
-                                >
-                                  <span className="text-xl select-none opacity-30">🖼</span>
-                                  <span className="text-[9px] font-black" style={{ color: "#9ca3af" }}>
-                                    Paste image here
                                   </span>
                                 </div>
                               )}
@@ -1672,8 +1704,46 @@ export default function Home() {
                                 </div>
                               )}
                             </div>
+                            ) : null}
                             {/* Column label + description */}
-                            <div className="flex-1 flex flex-col items-center justify-center px-3 py-3 text-center gap-1 overflow-hidden">
+                            <div className="flex-1 relative flex flex-col items-center justify-center px-3 py-3 text-center gap-1 overflow-hidden">
+                              {/* Paste image button — shown when no image */}
+                              {!col.image && !imagesLoading && !stabilityColKeys.has(`${idx}:${colIdx}`) && (
+                                <div
+                                  className="absolute top-2 right-2 z-10 flex items-center gap-1 px-2 py-0.5 rounded-lg cursor-pointer text-[9px] font-black select-none"
+                                  style={{
+                                    background: "#f1f5f9",
+                                    border: "1.5px dashed #cbd5e1",
+                                    color: "#94a3b8",
+                                  }}
+                                  tabIndex={0}
+                                  title="Click here and paste an image (Ctrl+V)"
+                                  onPaste={(e) => {
+                                    for (const item of Array.from(e.clipboardData?.items ?? [])) {
+                                      if (item.type.startsWith("image/")) {
+                                        const file = item.getAsFile();
+                                        if (!file) continue;
+                                        const reader = new FileReader();
+                                        reader.onload = (ev) => {
+                                          patchSlide(idx, {
+                                            columns: (current.columns ?? []).map((c, ci) =>
+                                              ci === colIdx
+                                                ? { ...c, image: ev.target?.result as string, imageCredit: "Pasted image" }
+                                                : c
+                                            ),
+                                          });
+                                        };
+                                        reader.readAsDataURL(file);
+                                        e.preventDefault();
+                                        return;
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <span>📎</span>
+                                  <span>Paste image</span>
+                                </div>
+                              )}
                               <input
                                 key={`col-label-${idx}-${colIdx}`}
                                 defaultValue={col.label}
@@ -1688,24 +1758,37 @@ export default function Home() {
                                 className="font-black text-xs md:text-sm leading-tight bg-transparent border-0 outline-none w-full text-center resize-none"
                                 style={{ color: "#166534" }}
                               />
-                              <textarea
-                                key={`col-desc-${idx}-${colIdx}`}
-                                defaultValue={col.description}
-                                onBlur={(e) => {
-                                  const val = e.target.value.trim() || col.description;
-                                  patchSlide(idx, {
-                                    columns: (current.columns ?? []).map((c, ci) =>
-                                      ci === colIdx ? { ...c, description: val } : c
-                                    ),
-                                  });
-                                }}
-                                rows={2}
-                                className="text-[10px] md:text-xs leading-snug bg-transparent border-0 outline-none w-full text-center resize-none"
-                                style={{
-                                  color: contentTextColor,
-                                  fieldSizing: "content" as never,
-                                }}
-                              />
+                              {editingKey === `${idx}-col-${colIdx}` ? (
+                                <textarea
+                                  autoFocus
+                                  key={`col-desc-${idx}-${colIdx}`}
+                                  defaultValue={col.description}
+                                  onBlur={(e) => {
+                                    const val = e.target.value.trim() || col.description;
+                                    patchSlide(idx, {
+                                      columns: (current.columns ?? []).map((c, ci) =>
+                                        ci === colIdx ? { ...c, description: val } : c
+                                      ),
+                                    });
+                                    setEditingKey(null);
+                                  }}
+                                  onKeyDown={(e) => { if (e.key === "Escape") setEditingKey(null); }}
+                                  rows={2}
+                                  className="text-[10px] md:text-xs leading-snug bg-transparent border-0 outline-none w-full text-center resize-none"
+                                  style={{
+                                    color: contentTextColor,
+                                    fieldSizing: "content" as never,
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className="text-[10px] md:text-xs leading-snug w-full text-center cursor-text select-text"
+                                  style={{ color: contentTextColor, minHeight: "1.5rem" }}
+                                  onClick={() => setEditingKey(`${idx}-col-${colIdx}`)}
+                                >
+                                  {renderInline(col.description)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -1868,20 +1951,31 @@ export default function Home() {
                               className="flex-1 px-3 py-2 overflow-y-auto"
                               style={{ background: "#f0fdf4" }}
                             >
-                              <textarea
-                                key={`comp-left-${idx}`}
-                                value={compLeftContent}
-                                onChange={(e) =>
-                                  patchSlide(idx, {
-                                    sideAContent: e.target.value,
-                                  })
-                                }
-                                className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
-                                style={{
-                                  color: contentTextColor,
-                                  fieldSizing: "content" as never,
-                                }}
-                              />
+                              {editingKey === `${idx}-sideA` ? (
+                                <textarea
+                                  autoFocus
+                                  key={`comp-left-${idx}`}
+                                  defaultValue={compLeftContent}
+                                  onBlur={(e) => {
+                                    patchSlide(idx, { sideAContent: e.target.value });
+                                    setEditingKey(null);
+                                  }}
+                                  onKeyDown={(e) => { if (e.key === "Escape") setEditingKey(null); }}
+                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                  style={{
+                                    color: contentTextColor,
+                                    fieldSizing: "content" as never,
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className="text-xs md:text-sm leading-relaxed w-full cursor-text select-text"
+                                  style={{ color: contentTextColor, minHeight: "3rem" }}
+                                  onClick={() => setEditingKey(`${idx}-sideA`)}
+                                >
+                                  {renderInline(compLeftContent)}
+                                </div>
+                              )}
                             </div>
                           </div>
                           {/* Side B */}
@@ -1963,20 +2057,31 @@ export default function Home() {
                               className="flex-1 px-3 py-2 overflow-y-auto"
                               style={{ background: "#ffffff" }}
                             >
-                              <textarea
-                                key={`comp-right-${idx}`}
-                                value={compRightContent}
-                                onChange={(e) =>
-                                  patchSlide(idx, {
-                                    sideBContent: e.target.value,
-                                  })
-                                }
-                                className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
-                                style={{
-                                  color: contentTextColor,
-                                  fieldSizing: "content" as never,
-                                }}
-                              />
+                              {editingKey === `${idx}-sideB` ? (
+                                <textarea
+                                  autoFocus
+                                  key={`comp-right-${idx}`}
+                                  defaultValue={compRightContent}
+                                  onBlur={(e) => {
+                                    patchSlide(idx, { sideBContent: e.target.value });
+                                    setEditingKey(null);
+                                  }}
+                                  onKeyDown={(e) => { if (e.key === "Escape") setEditingKey(null); }}
+                                  className="text-xs md:text-sm leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                  style={{
+                                    color: contentTextColor,
+                                    fieldSizing: "content" as never,
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className="text-xs md:text-sm leading-relaxed w-full cursor-text select-text"
+                                  style={{ color: contentTextColor, minHeight: "3rem" }}
+                                  onClick={() => setEditingKey(`${idx}-sideB`)}
+                                >
+                                  {renderInline(compRightContent)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2192,45 +2297,27 @@ export default function Home() {
                       <div className="flex flex-1 min-h-0">
                         {/* Text content */}
                         <div
-                          className={`${
-                            isNoImageSlide || (!displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx)) ? "w-full" : "flex-1"
-                          } relative px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden ${
-                            isNoImageSlide || (!displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx))
-                              ? "items-center justify-center"
-                              : "items-center"
-                          }`}
+                          className="relative flex-1 px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden items-center"
                           style={{ background: contentBg }}
                         >
-                          {/* Paste image button — shown at right edge when no image */}
+                          {/* Paste image button — small floating btn at right edge when no image */}
                           {!isNoImageSlide && !displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx) && (
                             <div
-                              className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer group"
-                              style={{ zIndex: 10 }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
                               tabIndex={0}
                               onPaste={(e) => handleImagePaste(e, idx)}
                               title="Click here and paste an image (Ctrl+V)"
                             >
                               <div
-                                className="flex flex-col items-center gap-1 px-1.5 py-3 rounded-l-lg transition-all"
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg cursor-pointer text-[9px] font-black select-none"
                                 style={{
                                   background: "#f1f5f9",
-                                  border: "2px solid #e2e8f0",
-                                  borderRight: "none",
+                                  border: "1.5px dashed #cbd5e1",
                                   color: "#94a3b8",
                                 }}
                               >
-                                <span className="text-sm select-none">📎</span>
-                                <span
-                                  className="text-[8px] font-black leading-tight"
-                                  style={{
-                                    writingMode: "vertical-rl",
-                                    textOrientation: "mixed",
-                                    transform: "rotate(180deg)",
-                                    color: "#94a3b8",
-                                  }}
-                                >
-                                  Paste image
-                                </span>
+                                <span>📎</span>
+                                <span>Paste image</span>
                               </div>
                             </div>
                           )}
@@ -2377,6 +2464,7 @@ export default function Home() {
 
                         {/* Image column — hidden for reflection/question/quiz/recap slides */}
                         {!isNoImageSlide && (
+                          displayImage || imagesLoading || stabilitySlides.has(idx) || diagramLoadingSlides.has(idx) ? (
                           <div
                             className={`${
                               !pastedEntry && current?.imageSource === "diagram"
@@ -2463,9 +2551,7 @@ export default function Home() {
                                     ×
                                   </button>
                                 </div>
-                              ) : imagesLoading ||
-                                stabilitySlides.has(idx) ||
-                                diagramLoadingSlides.has(idx) ? (
+                              ) : (
                                 <div
                                   className="w-full h-full min-h-[80px] rounded-lg animate-pulse flex items-center justify-center"
                                   style={{
@@ -2482,27 +2568,6 @@ export default function Home() {
                                       : stabilitySlides.has(idx)
                                       ? "Generating AI image…"
                                       : "Loading image…"}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div
-                                  className="w-full h-full min-h-[80px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer focus:outline-none"
-                                  style={{
-                                    borderColor: "#d1d5db",
-                                    background: "#f9fafb",
-                                  }}
-                                  tabIndex={0}
-                                  onPaste={(e) => handleImagePaste(e, idx)}
-                                  title="Click here and paste an image (Ctrl+V)"
-                                >
-                                  <span className="text-2xl md:text-3xl select-none">
-                                    💡
-                                  </span>
-                                  <span
-                                    className="text-[10px] md:text-xs font-black"
-                                    style={{ color: "#9ca3af" }}
-                                  >
-                                    Paste image here
                                   </span>
                                 </div>
                               )}
@@ -2549,6 +2614,7 @@ export default function Home() {
                               )
                             ) : null}
                           </div>
+                          ) : null
                         )}
                       </div>
                     )}
