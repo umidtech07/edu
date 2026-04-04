@@ -2092,101 +2092,133 @@ export default function Home() {
                         className="flex-1 flex flex-col min-h-0"
                         style={{ background: contentBg }}
                       >
-                        {/* Image top */}
-                        <div
-                          className="shrink-0 relative overflow-hidden group"
-                          style={{
-                            height: "45%",
-                            borderBottom: "3px solid #e2e8f0",
-                            background: "#f8fafc",
-                          }}
-                          tabIndex={0}
-                          onPaste={(e) => handleImagePaste(e, idx)}
-                        >
-                          {displayImage ? (
-                            !pastedEntry &&
-                            current?.imageSource === "diagram" ? (
-                              <div
-                                className="w-full h-full flex items-center justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-full overflow-hidden"
-                                dangerouslySetInnerHTML={{
-                                  __html:
-                                    styledDiagramSvg ??
-                                    (() => {
-                                      try {
-                                        const b64 = displayImage.split(",")[1];
-                                        return b64 ? atob(b64) : "";
-                                      } catch {
-                                        return "";
-                                      }
-                                    })(),
-                                }}
-                              />
+                        {/* Image top — collapsed to small paste button when no image */}
+                        {displayImage || imagesLoading || stabilitySlides.has(idx) || diagramLoadingSlides.has(idx) ? (
+                          <div
+                            className="shrink-0 relative overflow-hidden group"
+                            style={{
+                              height: "45%",
+                              borderBottom: "3px solid #e2e8f0",
+                              background: "#f8fafc",
+                            }}
+                            tabIndex={0}
+                            onPaste={(e) => handleImagePaste(e, idx)}
+                          >
+                            {displayImage ? (
+                              !pastedEntry &&
+                              current?.imageSource === "diagram" ? (
+                                <div
+                                  className="w-full h-full flex items-center justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-full overflow-hidden"
+                                  dangerouslySetInnerHTML={{
+                                    __html:
+                                      styledDiagramSvg ??
+                                      (() => {
+                                        try {
+                                          const b64 = displayImage.split(",")[1];
+                                          return b64 ? atob(b64) : "";
+                                        } catch {
+                                          return "";
+                                        }
+                                      })(),
+                                  }}
+                                />
+                              ) : (
+                                <img
+                                  src={displayImage}
+                                  alt={current?.imageAlt || ""}
+                                  className="w-full h-full object-cover"
+                                />
+                              )
                             ) : (
-                              <img
-                                src={displayImage}
-                                alt={current?.imageAlt || ""}
-                                className="w-full h-full object-cover"
-                              />
-                            )
-                          ) : imagesLoading ||
-                            stabilitySlides.has(idx) ||
-                            diagramLoadingSlides.has(idx) ? (
-                            <div
-                              className="w-full h-full flex items-center justify-center animate-pulse"
-                              style={{ background: "#f1f5f9" }}
-                            >
-                              <span
-                                className="text-[10px] md:text-xs font-black"
-                                style={{ color: "#94a3b8" }}
+                              <div
+                                className="w-full h-full flex items-center justify-center animate-pulse"
+                                style={{ background: "#f1f5f9" }}
                               >
-                                {diagramLoadingSlides.has(idx)
-                                  ? "Generating diagram…"
-                                  : stabilitySlides.has(idx)
-                                  ? "Generating AI image…"
-                                  : "Loading image…"}
-                              </span>
-                            </div>
-                          ) : (
+                                <span
+                                  className="text-[10px] md:text-xs font-black"
+                                  style={{ color: "#94a3b8" }}
+                                >
+                                  {diagramLoadingSlides.has(idx)
+                                    ? "Generating diagram…"
+                                    : stabilitySlides.has(idx)
+                                    ? "Generating AI image…"
+                                    : "Loading image…"}
+                                </span>
+                              </div>
+                            )}
+                            {displayImage && (
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
+                                <span
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
+                                  style={{ color: "#ffffff", background: "#166534" }}
+                                >
+                                  Paste to replace (Ctrl+V)
+                                </span>
+                              </div>
+                            )}
+                            {/* Remove image button */}
+                            {displayImage && (
+                              <button
+                                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-full text-[10px] font-black leading-none"
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  background: "#dc2626",
+                                  color: "#fff",
+                                  border: "2px solid #fff",
+                                  zIndex: 20,
+                                }}
+                                title="Remove image"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (pastedEntry) {
+                                    setPastedImages((prev) => {
+                                      const next = { ...prev };
+                                      delete next[idx];
+                                      return next;
+                                    });
+                                  } else {
+                                    patchSlide(idx, { image: null, imageSource: null, imageCredit: null, imageCreditUrl: null });
+                                  }
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                            {imageCredit && (
+                              <div
+                                className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl"
+                                style={{
+                                  color: "#166534",
+                                  background: "rgba(255,255,255,0.85)",
+                                }}
+                              >
+                                {imageCredit}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          /* No image: collapsed paste button at top */
+                          <div
+                            className="shrink-0 flex items-center justify-center py-1"
+                            style={{ borderBottom: "1px dashed #e2e8f0" }}
+                          >
                             <div
-                              className="w-full h-full flex flex-col items-center justify-center gap-1 cursor-pointer"
+                              className="flex items-center gap-1 px-2 py-0.5 rounded-lg cursor-pointer text-[9px] font-black select-none"
                               style={{
-                                background: "#f9fafb",
-                                border: "2px dashed #d1d5db",
+                                background: "#f1f5f9",
+                                border: "1.5px dashed #cbd5e1",
+                                color: "#94a3b8",
                               }}
                               tabIndex={0}
                               onPaste={(e) => handleImagePaste(e, idx)}
+                              title="Click here and paste an image (Ctrl+V)"
                             >
-                              <span className="text-2xl select-none">💡</span>
-                              <span
-                                className="text-[10px] font-black"
-                                style={{ color: "#9ca3af" }}
-                              >
-                                Paste image here
-                              </span>
+                              <span>📎</span>
+                              <span>Paste image</span>
                             </div>
-                          )}
-                          {displayImage && (
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
-                              <span
-                                className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
-                                style={{ color: "#ffffff", background: "#166534" }}
-                              >
-                                Paste to replace (Ctrl+V)
-                              </span>
-                            </div>
-                          )}
-                          {imageCredit && (
-                            <div
-                              className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl"
-                              style={{
-                                color: "#166534",
-                                background: "rgba(255,255,255,0.85)",
-                              }}
-                            >
-                              {imageCredit}
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                         {/* Text below */}
                         <div className="flex-1 px-5 md:px-7 py-3 overflow-y-auto flex flex-col justify-center">
                           {current?.content != null ? (
@@ -2300,27 +2332,6 @@ export default function Home() {
                           className="relative flex-1 px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden items-center"
                           style={{ background: contentBg }}
                         >
-                          {/* Paste image button — small floating btn at right edge when no image */}
-                          {!isNoImageSlide && !displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx) && (
-                            <div
-                              className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
-                              tabIndex={0}
-                              onPaste={(e) => handleImagePaste(e, idx)}
-                              title="Click here and paste an image (Ctrl+V)"
-                            >
-                              <div
-                                className="flex items-center gap-1 px-2 py-1 rounded-lg cursor-pointer text-[9px] font-black select-none"
-                                style={{
-                                  background: "#f1f5f9",
-                                  border: "1.5px dashed #cbd5e1",
-                                  color: "#94a3b8",
-                                }}
-                              >
-                                <span>📎</span>
-                                <span>Paste image</span>
-                              </div>
-                            </div>
-                          )}
                           {current?.content != null ? (
                             /* Upper grades: editable paragraph */
                             <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
@@ -2614,7 +2625,32 @@ export default function Home() {
                               )
                             ) : null}
                           </div>
-                          ) : null
+                          ) : (
+                          /* No image: collapsed paste button bar on the right side */
+                          <div
+                            className="shrink-0 flex flex-col items-center justify-center gap-1 cursor-pointer"
+                            style={{
+                              width: "26px",
+                              borderLeft: "1px dashed #e2e8f0",
+                              background: "#f9fafb",
+                            }}
+                            tabIndex={0}
+                            onPaste={(e) => handleImagePaste(e, idx)}
+                            title="Click here and paste an image (Ctrl+V)"
+                          >
+                            <span className="text-sm select-none" style={{ transform: "rotate(90deg)" }}>📎</span>
+                            <span
+                              className="text-[8px] font-black select-none"
+                              style={{
+                                color: "#94a3b8",
+                                writingMode: "vertical-rl",
+                                transform: "rotate(180deg)",
+                              }}
+                            >
+                              Paste image
+                            </span>
+                          </div>
+                          )
                         )}
                       </div>
                     )}

@@ -464,7 +464,6 @@ export async function POST(req: Request) {
         return openai.chat.completions.create({
           model: "gpt-4.1-nano",
           temperature: 0.9,
-          max_tokens: isPrimary ? 500 : 900,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: "Return strict JSON only." },
