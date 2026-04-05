@@ -2673,7 +2673,32 @@ export default function Home() {
                               )
                             ) : null}
                           </div>
-                          ) : null
+                          ) : (
+                          /* No image: collapsed paste button bar on the right side */
+                          <div
+                            className="shrink-0 flex flex-col items-center justify-center gap-1 cursor-pointer"
+                            style={{
+                              width: "26px",
+                              borderLeft: "1px dashed #e2e8f0",
+                              background: "#f9fafb",
+                            }}
+                            tabIndex={0}
+                            onPaste={(e) => handleImagePaste(e, idx)}
+                            title="Click here and paste an image (Ctrl+V)"
+                          >
+                            <span className="text-sm select-none" style={{ transform: "rotate(90deg)" }}>📎</span>
+                            <span
+                              className="text-[8px] font-black select-none"
+                              style={{
+                                color: "#94a3b8",
+                                writingMode: "vertical-rl",
+                                transform: "rotate(180deg)",
+                              }}
+                            >
+                              Paste image
+                            </span>
+                          </div>
+                          )
                         )}
                       </div>
                     )}

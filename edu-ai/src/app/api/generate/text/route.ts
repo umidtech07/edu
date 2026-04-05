@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
-import { searchCurriculum, compressCurriculumContext } from "@/lib/curriculum-rag";
+import {
+  searchCurriculum,
+  compressCurriculumContext,
+} from "@/lib/curriculum-rag";
 
 export const runtime = "nodejs";
 
@@ -15,10 +18,15 @@ function buildCategorySlideSequence(
     case "collection": {
       const items = structureItems.slice(0, 6);
       const compSlide = items.length + 3;
-      const itemLines = items.length > 0
-        ? items.map((item, i) => `  ${i + 3}. fact or explanation — "${item}"`).join("\n") +
-          `\n  ${compSlide <= 9 ? compSlide : 9}. comparison — two most contrasting subjects`
-        : `  3–8. fact or explanation — one slide per subject\n  9. comparison — two most contrasting subjects`;
+      const itemLines =
+        items.length > 0
+          ? items
+              .map((item, i) => `  ${i + 3}. fact or explanation — "${item}"`)
+              .join("\n") +
+            `\n  ${
+              compSlide <= 9 ? compSlide : 9
+            }. comparison — two most contrasting subjects`
+          : `  3–8. fact or explanation — one slide per subject\n  9. comparison — two most contrasting subjects`;
       return `Slide sequence — COLLECTION (exactly 10 slides):
   1. intro
   2. columns (MANDATORY) — one card per subject; ${COLUMNS_CARD}
@@ -29,10 +37,16 @@ ${itemLines}
     case "process": {
       const items = structureItems.slice(0, 5);
       const quizSlide = items.length + 4;
-      const stepLines = items.length > 0
-        ? items.map((step, i) => `  ${i + 4}. explanation — step ${i + 1}: "${step}"`).join("\n") +
-          `\n  ${quizSlide <= 9 ? quizSlide : 9}. quiz (no image)`
-        : `  4–8. explanation — one slide per step\n  9. quiz (no image)`;
+      const stepLines =
+        items.length > 0
+          ? items
+              .map(
+                (step, i) =>
+                  `  ${i + 4}. explanation — step ${i + 1}: "${step}"`
+              )
+              .join("\n") +
+            `\n  ${quizSlide <= 9 ? quizSlide : 9}. quiz (no image)`
+          : `  4–8. explanation — one slide per step\n  9. quiz (no image)`;
       return `Slide sequence — PROCESS (exactly 10 slides):
   1. intro
   2. explanation — overview
@@ -44,10 +58,18 @@ ${stepLines}
     case "narrative": {
       const items = structureItems.slice(0, 5);
       const reflectSlide = items.length + 4;
-      const phaseLines = items.length > 0
-        ? items.map((phase, i) => `  ${i + 4}. ${i % 2 === 0 ? "explanation" : "fact"} — "${phase}"`).join("\n") +
-          `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
-        : `  4–8. explanation or fact — one slide per phase/milestone\n  9. reflection (no image)`;
+      const phaseLines =
+        items.length > 0
+          ? items
+              .map(
+                (phase, i) =>
+                  `  ${i + 4}. ${
+                    i % 2 === 0 ? "explanation" : "fact"
+                  } — "${phase}"`
+              )
+              .join("\n") +
+            `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
+          : `  4–8. explanation or fact — one slide per phase/milestone\n  9. reflection (no image)`;
       return `Slide sequence — NARRATIVE (exactly 10 slides):
   1. intro
   2. explanation — historical context
@@ -59,7 +81,9 @@ ${phaseLines}
     case "comparison": {
       const thingA = structureItems[0] ?? "Subject A";
       const thingB = structureItems[1] ?? "Subject B";
-      const compStyle = isPrimary ? "side-by-side visual comparison" : "analytical comparison";
+      const compStyle = isPrimary
+        ? "side-by-side visual comparison"
+        : "analytical comparison";
       return `Slide sequence — COMPARISON (exactly 10 slides):
   1. intro — introduce "${thingA}" and "${thingB}"
   2. explanation — background context
@@ -77,11 +101,21 @@ ${phaseLines}
       const items = structureItems.slice(0, 4);
       const compSlide = items.length + 4;
       const reflectSlide = items.length + 5;
-      const causeLines = items.length > 0
-        ? items.map((item, i) => `  ${i + 4}. ${i < Math.ceil(items.length / 2) ? "explanation" : "fact"} — "${item}"`).join("\n") +
-          `\n  ${compSlide <= 8 ? compSlide : 8}. comparison — key cause vs. key effect` +
-          `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
-        : `  4–7. explanation or fact — one slide per cause or effect\n  8. comparison — key cause vs. key effect\n  9. reflection (no image)`;
+      const causeLines =
+        items.length > 0
+          ? items
+              .map(
+                (item, i) =>
+                  `  ${i + 4}. ${
+                    i < Math.ceil(items.length / 2) ? "explanation" : "fact"
+                  } — "${item}"`
+              )
+              .join("\n") +
+            `\n  ${
+              compSlide <= 8 ? compSlide : 8
+            }. comparison — key cause vs. key effect` +
+            `\n  ${reflectSlide <= 9 ? reflectSlide : 9}. reflection (no image)`
+          : `  4–7. explanation or fact — one slide per cause or effect\n  8. comparison — key cause vs. key effect\n  9. reflection (no image)`;
       return `Slide sequence — CAUSE-EFFECT (exactly 10 slides):
   1. intro
   2. explanation — background context
@@ -94,13 +128,24 @@ ${causeLines}
       const items = structureItems.slice(0, 5);
       let itemLines: string;
       if (items.length > 0) {
-        const itemSlides = items.map((item, i) => `  ${i + 4}. explanation — "${item}": exact notation + 2–3 examples`).join("\n");
+        const itemSlides = items
+          .map(
+            (item, i) =>
+              `  ${
+                i + 4
+              }. explanation — "${item}": exact notation + 2–3 examples`
+          )
+          .join("\n");
         const lastItemSlide = items.length + 3; // item i maps to slide i+4; last = items.length-1+4 = items.length+3
         const gapSlides: string[] = [];
         for (let s = lastItemSlide + 1; s <= 8; s++) {
-          gapSlides.push(`  ${s}. example — additional worked example applying the formula`);
+          gapSlides.push(
+            `  ${s}. example — additional worked example applying the formula`
+          );
         }
-        itemLines = itemSlides + (gapSlides.length > 0 ? "\n" + gapSlides.join("\n") : "");
+        itemLines =
+          itemSlides +
+          (gapSlides.length > 0 ? "\n" + gapSlides.join("\n") : "");
       } else {
         itemLines = `  4–8. explanation — one slide per form/rule/component`;
       }
@@ -356,7 +401,7 @@ const CATEGORY_SLIDE_SCHEMAS: Record<
 
 function getCategorySchema(
   topicType: string,
-  slideType: string,
+  slideType: string
 ): { schemaHint: string; contentRules: string } | null {
   return CATEGORY_SLIDE_SCHEMAS[topicType]?.[slideType] ?? null;
 }
@@ -385,7 +430,15 @@ function buildBoldInstruction(topicType: string): string {
 // ── Step 1: Ultra-fast category classifier — returns ONLY the category string ─
 // max_tokens=10 so the model is forced to stop after the single word.
 async function classifyTopicCategory(topic: string): Promise<string> {
-  const VALID = ["collection","process","narrative","comparison","cause-effect","formula","single-subject"];
+  const VALID = [
+    "collection",
+    "process",
+    "narrative",
+    "comparison",
+    "cause-effect",
+    "formula",
+    "single-subject",
+  ];
   try {
     const result = await openai.chat.completions.create({
       model: "gpt-4.1-nano",
@@ -394,7 +447,8 @@ async function classifyTopicCategory(topic: string): Promise<string> {
       messages: [
         {
           role: "system",
-          content: "You are a topic classifier. Reply with ONLY the category name. One word (or hyphenated word). No punctuation. No explanation. Stop immediately after.",
+          content:
+            "You are a topic classifier. Reply with ONLY the category name. One word (or hyphenated word). No punctuation. No explanation. Stop immediately after.",
         },
         {
           role: "user",
@@ -420,23 +474,34 @@ Topic: "${topic}"`,
         },
       ],
     });
-    const raw = (result.choices[0]?.message?.content ?? "").trim().toLowerCase().replace(/[^a-z-]/g, "");
+    const raw = (result.choices[0]?.message?.content ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z-]/g, "");
     if (VALID.includes(raw)) return raw;
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return "single-subject";
 }
 
 // ── Step 2: Get structure items for the identified category ───────────────────
 // Called after classifyTopicCategory — uses the known category to ask the right question.
-async function getStructureItems(topic: string, topicType: string): Promise<string[]> {
+async function getStructureItems(
+  topic: string,
+  topicType: string
+): Promise<string[]> {
   if (topicType === "single-subject") return [];
   const ITEM_HINT: Record<string, string> = {
-    collection:    "the distinct subjects/people/places/animals to include — their exact names",
-    process:       "the steps in order — short action labels (e.g. 'Evaporation', 'Condensation')",
-    narrative:     "key phases or milestones in strict chronological order",
-    comparison:    "EXACTLY 2 items: the two things being compared — nothing else",
-    "cause-effect":"the main causes or effects to address (mix both if applicable)",
-    formula:       `the named forms, usage rules, or components to cover (e.g. for "present perfect": ["Affirmative (S+have/has+V3)", "Negative (S+haven't/hasn't+V3)", "Question (Have/Has+S+V3?)", "Time expressions (already, just, yet, ever, never, since, for)", "Usage: completed actions with present result"])`,
+    collection:
+      "the distinct subjects/people/places/animals to include — their exact names",
+    process:
+      "the steps in order — short action labels (e.g. 'Evaporation', 'Condensation')",
+    narrative: "key phases or milestones in strict chronological order",
+    comparison: "EXACTLY 2 items: the two things being compared — nothing else",
+    "cause-effect":
+      "the main causes or effects to address (mix both if applicable)",
+    formula: `the named forms, usage rules, or components to cover (e.g. for "present perfect": ["Affirmative (S+have/has+V3)", "Negative (S+haven't/hasn't+V3)", "Question (Have/Has+S+V3?)", "Time expressions (already, just, yet, ever, never, since, for)", "Usage: completed actions with present result"])`,
   };
   const hint = ITEM_HINT[topicType] ?? "the key items to cover";
   try {
@@ -459,7 +524,9 @@ Return ONLY JSON: {"items":["string"]}`,
     });
     const parsed = safeJsonParse(result.choices[0]?.message?.content ?? "");
     if (Array.isArray(parsed?.items)) return parsed.items as string[];
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return [];
 }
 
@@ -474,28 +541,80 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "Formula / Grammar rule / Math theorem / Physics law deck",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { mainParagraph: "2-3 hook sentences — WHY this rule matters; mention notation or domain explicitly", lessonAimText: ["aim 1 (start with action verb e.g. Understand…)", "aim 2 (e.g. Apply…)", "aim 3 (e.g. Recognise…)"] },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          mainParagraph:
+            "2-3 hook sentences — WHY this rule matters; mention notation or domain explicitly",
+          lessonAimText: [
+            "aim 1 (start with action verb e.g. Understand…)",
+            "aim 2 (e.g. Apply…)",
+            "aim 3 (e.g. Recognise…)",
+          ],
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "NOTATION — display the complete canonical formula with ALL forms or variants",
-        fields: { notation: "full canonical notation e.g. S + have/has + V3  or  a²+b²=c²  or  F=ma; wrap each component in **bold**", notationBreakdown: "3-4 sentences unpacking every component with at least 1 worked example inline" },
+        n: 2,
+        slideType: "explanation",
+        purpose:
+          "NOTATION — display the complete canonical formula with ALL forms or variants",
+        fields: {
+          notation:
+            "full canonical notation e.g. S + have/has + V3  or  a²+b²=c²  or  F=ma; wrap each component in **bold**",
+          notationBreakdown:
+            "3-4 sentences unpacking every component with at least 1 worked example inline",
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "one card per formula component — break the notation into named parts",
-        fields: { columns: [{ label: "component name e.g. Subject", description: "1 sentence role this component plays", imageQuery: "metaphorical English scene e.g. 'person raising hand to speak'" }] },
+        n: 3,
+        slideType: "columns",
+        purpose:
+          "one card per formula component — break the notation into named parts",
+        fields: {
+          columns: [
+            {
+              label: "component name e.g. Subject",
+              description: "1 sentence role this component plays",
+              imageQuery:
+                "metaphorical English scene e.g. 'person raising hand to speak'",
+            },
+          ],
+        },
       },
       {
-        n: "4-8", slideType: "explanation | example", purpose: "one slide per form / usage rule / worked calculation",
-        fields: { notation: "exact notation for this specific form e.g. S + haven't/hasn't + V3", explanation: "2-3 sentences on meaning and when to use this form", examples: ["step-by-step worked example 1", "step-by-step worked example 2"] },
+        n: "4-8",
+        slideType: "explanation | example",
+        purpose: "one slide per form / usage rule / worked calculation",
+        fields: {
+          notation:
+            "exact notation for this specific form e.g. S + haven't/hasn't + V3",
+          explanation: "2-3 sentences on meaning and when to use this form",
+          examples: [
+            "step-by-step worked example 1",
+            "step-by-step worked example 2",
+          ],
+        },
       },
       {
-        n: 9, slideType: "quiz",
-        fields: { bullets: ["A. option", "B. option", "C. option", "D. option"], correctIndex: "0-based integer (0=A … 3=D)" },
+        n: 9,
+        slideType: "quiz",
+        fields: {
+          bullets: ["A. option", "B. option", "C. option", "D. option"],
+          correctIndex: "0-based integer (0=A … 3=D)",
+        },
       },
       {
-        n: 10, slideType: "recap", purpose: "reinforce the full formula + usage rules",
-        fields: { fullNotation: "canonical formula repeated exactly as on slide 2", usageRules: ["concise rule/tip 1 starting with a verb", "rule/tip 2", "rule/tip 3"] },
+        n: 10,
+        slideType: "recap",
+        purpose: "reinforce the full formula + usage rules",
+        fields: {
+          fullNotation: "canonical formula repeated exactly as on slide 2",
+          usageRules: [
+            "concise rule/tip 1 starting with a verb",
+            "rule/tip 2",
+            "rule/tip 3",
+          ],
+        },
       },
     ],
   },
@@ -504,28 +623,73 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "Step-by-step sequence — how something works or happens",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { hook: "1-2 sentences sparking curiosity — surprising stat or vivid analogy", aimPoints: ["You will understand…", "By the end you will be able to…"] },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          hook: "1-2 sentences sparking curiosity — surprising stat or vivid analogy",
+          aimPoints: [
+            "You will understand…",
+            "By the end you will be able to…",
+          ],
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "overview of the entire process end-to-end",
-        fields: { overview: "2-3 sentences covering the full sequence from start to finish", keyTerms: ["essential term 1", "essential term 2", "essential term 3"] },
+        n: 2,
+        slideType: "explanation",
+        purpose: "overview of the entire process end-to-end",
+        fields: {
+          overview:
+            "2-3 sentences covering the full sequence from start to finish",
+          keyTerms: [
+            "essential term 1",
+            "essential term 2",
+            "essential term 3",
+          ],
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "3-4 key stages summarised as cards",
-        fields: { columns: [{ label: "stage name", description: "1 sentence what happens here", imageQuery: "English stock-photo query" }] },
+        n: 3,
+        slideType: "columns",
+        purpose: "3-4 key stages summarised as cards",
+        fields: {
+          columns: [
+            {
+              label: "stage name",
+              description: "1 sentence what happens here",
+              imageQuery: "English stock-photo query",
+            },
+          ],
+        },
       },
       {
-        n: "4-8", slideType: "explanation", purpose: "one slide per step in sequence order",
-        fields: { stepName: "step label e.g. Evaporation", stepNumber: "integer position", whatHappens: "2-3 sentences — exactly what occurs in this step with **bold** key terms", whyItMatters: "1 sentence — why this step is critical to the whole process" },
+        n: "4-8",
+        slideType: "explanation",
+        purpose: "one slide per step in sequence order",
+        fields: {
+          stepName: "step label e.g. Evaporation",
+          stepNumber: "integer position",
+          whatHappens:
+            "2-3 sentences — exactly what occurs in this step with **bold** key terms",
+          whyItMatters:
+            "1 sentence — why this step is critical to the whole process",
+        },
       },
       {
-        n: 9, slideType: "quiz",
-        fields: { bullets: ["A. option", "B. option", "C. option", "D. option"], correctIndex: "0-3" },
+        n: 9,
+        slideType: "quiz",
+        fields: {
+          bullets: ["A. option", "B. option", "C. option", "D. option"],
+          correctIndex: "0-3",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { sequence: ["step 1 label", "step 2 label", "step 3 label", "…"], keyTakeaway: "1 memorable sentence — the single most important insight about this process" },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          sequence: ["step 1 label", "step 2 label", "step 3 label", "…"],
+          keyTakeaway:
+            "1 memorable sentence — the single most important insight about this process",
+        },
       },
     ],
   },
@@ -534,54 +698,141 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "Chronological story / historical arc",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { hook: "1-2 gripping sentences placing the student in the historical moment", timeSpan: "concise date range e.g. 1789–1799", significance: "1 sentence — why this story still matters today" },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          hook: "1-2 gripping sentences placing the student in the historical moment",
+          timeSpan: "concise date range e.g. 1789–1799",
+          significance: "1 sentence — why this story still matters today",
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "historical backdrop / context before the main events",
-        fields: { period: "time label e.g. Before 1789", event: "2-3 sentences on what set the stage", impact: "1 sentence on what it triggered" },
+        n: 2,
+        slideType: "explanation",
+        purpose: "historical backdrop / context before the main events",
+        fields: {
+          period: "time label e.g. Before 1789",
+          event: "2-3 sentences on what set the stage",
+          impact: "1 sentence on what it triggered",
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "3-4 key figures / places / milestones as cards",
-        fields: { columns: [{ label: "name or place", description: "1 sentence role in the story", imageQuery: "English photo or illustration query" }] },
+        n: 3,
+        slideType: "columns",
+        purpose: "3-4 key figures / places / milestones as cards",
+        fields: {
+          columns: [
+            {
+              label: "name or place",
+              description: "1 sentence role in the story",
+              imageQuery: "English photo or illustration query",
+            },
+          ],
+        },
       },
       {
-        n: "4-8", slideType: "explanation | fact", purpose: "one slide per phase or milestone in strict chronological order",
-        fields: { period: "time label e.g. 1793–1794", headline: "newspaper-style statement max 18 words", moment: "2 sentences with specific names, dates, and detail", legacy: "1 sentence — what changed after this moment" },
+        n: "4-8",
+        slideType: "explanation | fact",
+        purpose:
+          "one slide per phase or milestone in strict chronological order",
+        fields: {
+          period: "time label e.g. 1793–1794",
+          headline: "newspaper-style statement max 18 words",
+          moment: "2 sentences with specific names, dates, and detail",
+          legacy: "1 sentence — what changed after this moment",
+        },
       },
       {
-        n: 9, slideType: "reflection",
-        fields: { content: "1-2 thought-provoking sentences connecting the history to today — written in second person (you)" },
+        n: 9,
+        slideType: "reflection",
+        fields: {
+          content:
+            "1-2 thought-provoking sentences connecting the history to today — written in second person (you)",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { timeline: ["PERIOD: event label", "PERIOD: event label", "PERIOD: event label"], bigPicture: "1 sentence — the overarching lesson or pattern from this narrative" },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          timeline: [
+            "PERIOD: event label",
+            "PERIOD: event label",
+            "PERIOD: event label",
+          ],
+          bigPicture:
+            "1 sentence — the overarching lesson or pattern from this narrative",
+        },
       },
     ],
   },
 
   collection: {
-    description: "Multiple distinct subjects — people / places / animals / examples",
+    description:
+      "Multiple distinct subjects — people / places / animals / examples",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { overview: "2-3 sentences introducing the collection — what unifies these subjects and why they are worth studying together", subjects: ["subject 1 exact name", "subject 2 exact name", "subject 3 exact name"] },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          overview:
+            "2-3 sentences introducing the collection — what unifies these subjects and why they are worth studying together",
+          subjects: [
+            "subject 1 exact name",
+            "subject 2 exact name",
+            "subject 3 exact name",
+          ],
+        },
       },
       {
-        n: 2, slideType: "columns", purpose: "one card per subject — at-a-glance overview grid",
-        fields: { columns: [{ label: "subject name", description: "1 sentence — single most defining characteristic", imageQuery: "English photo query" }] },
+        n: 2,
+        slideType: "columns",
+        purpose: "one card per subject — at-a-glance overview grid",
+        fields: {
+          columns: [
+            {
+              label: "subject name",
+              description: "1 sentence — single most defining characteristic",
+              imageQuery: "English photo query",
+            },
+          ],
+        },
       },
       {
-        n: "3-8", slideType: "explanation | fact", purpose: "one dedicated spotlight slide per subject",
-        fields: { subjectName: "exact subject name", headline: "1 punchy defining sentence with **bold** key term", details: "2-3 sentences — origin, numbers, context with **bold** standout facts", standoutFact: "1 surprising or record-breaking fact about this subject" },
+        n: "3-8",
+        slideType: "explanation | fact",
+        purpose: "one dedicated spotlight slide per subject",
+        fields: {
+          subjectName: "exact subject name",
+          headline: "1 punchy defining sentence with **bold** key term",
+          details:
+            "2-3 sentences — origin, numbers, context with **bold** standout facts",
+          standoutFact:
+            "1 surprising or record-breaking fact about this subject",
+        },
       },
       {
-        n: 9, slideType: "comparison", purpose: "two most contrasting subjects placed side-by-side",
-        fields: { sideALabel: "subject A name", sideBLabel: "subject B name", sideAContent: "2-3 sentences on subject A", sideBContent: "2-3 sentences on subject B" },
+        n: 9,
+        slideType: "comparison",
+        purpose: "two most contrasting subjects placed side-by-side",
+        fields: {
+          sideALabel: "subject A name",
+          sideBLabel: "subject B name",
+          sideAContent: "2-3 sentences on subject A",
+          sideBContent: "2-3 sentences on subject B",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { highlights: ["SubjectName: one striking detail", "SubjectName: one striking detail", "SubjectName: one striking detail"], bigIdea: "1 sentence — what all subjects share or why they matter collectively" },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          highlights: [
+            "SubjectName: one striking detail",
+            "SubjectName: one striking detail",
+            "SubjectName: one striking detail",
+          ],
+          bigIdea:
+            "1 sentence — what all subjects share or why they matter collectively",
+        },
       },
     ],
   },
@@ -590,36 +841,93 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "Two distinct subjects compared analytically",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { subjectA: "full name of first subject", subjectB: "full name of second subject", centralQuestion: "guiding question framing the whole comparison e.g. Which is better adapted for survival — the shark or the dolphin?" },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          subjectA: "full name of first subject",
+          subjectB: "full name of second subject",
+          centralQuestion:
+            "guiding question framing the whole comparison e.g. Which is better adapted for survival — the shark or the dolphin?",
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "shared background context for both subjects",
-        fields: { subject: "both subject names", characteristics: "2-3 sentences on shared context or historical backdrop", uniquePoint: "1 sentence — the key tension or contrast between them" },
+        n: 2,
+        slideType: "explanation",
+        purpose: "shared background context for both subjects",
+        fields: {
+          subject: "both subject names",
+          characteristics:
+            "2-3 sentences on shared context or historical backdrop",
+          uniquePoint: "1 sentence — the key tension or contrast between them",
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "3-4 comparison dimensions as cards",
-        fields: { columns: [{ label: "dimension e.g. Speed", description: "1 sentence framing this dimension", imageQuery: "English photo query" }] },
+        n: 3,
+        slideType: "columns",
+        purpose: "3-4 comparison dimensions as cards",
+        fields: {
+          columns: [
+            {
+              label: "dimension e.g. Speed",
+              description: "1 sentence framing this dimension",
+              imageQuery: "English photo query",
+            },
+          ],
+        },
       },
       {
-        n: 4, slideType: "explanation", purpose: "deep dive — subject A only",
-        fields: { subject: "subject A name", characteristics: "2-3 sentences on subject A's key properties/behaviour/history", uniquePoint: "1 sentence — what makes subject A distinctively different from B" },
+        n: 4,
+        slideType: "explanation",
+        purpose: "deep dive — subject A only",
+        fields: {
+          subject: "subject A name",
+          characteristics:
+            "2-3 sentences on subject A's key properties/behaviour/history",
+          uniquePoint:
+            "1 sentence — what makes subject A distinctively different from B",
+        },
       },
       {
-        n: 5, slideType: "explanation", purpose: "deep dive — subject B only",
-        fields: { subject: "subject B name", characteristics: "2-3 sentences on subject B's key properties/behaviour/history", uniquePoint: "1 sentence — what makes subject B distinctively different from A" },
+        n: 5,
+        slideType: "explanation",
+        purpose: "deep dive — subject B only",
+        fields: {
+          subject: "subject B name",
+          characteristics:
+            "2-3 sentences on subject B's key properties/behaviour/history",
+          uniquePoint:
+            "1 sentence — what makes subject B distinctively different from A",
+        },
       },
       {
-        n: "6-8", slideType: "comparison", purpose: "one slide each: similarities / differences / strengths-weaknesses",
-        fields: { sideALabel: "subject A name", sideBLabel: "subject B name", sideAContent: "2-3 sentences on A's angle for this dimension", sideBContent: "2-3 sentences on B's angle for this dimension" },
+        n: "6-8",
+        slideType: "comparison",
+        purpose:
+          "one slide each: similarities / differences / strengths-weaknesses",
+        fields: {
+          sideALabel: "subject A name",
+          sideBLabel: "subject B name",
+          sideAContent: "2-3 sentences on A's angle for this dimension",
+          sideBContent: "2-3 sentences on B's angle for this dimension",
+        },
       },
       {
-        n: 9, slideType: "quiz",
-        fields: { bullets: ["A. option", "B. option", "C. option", "D. option"], correctIndex: "0-3" },
+        n: 9,
+        slideType: "quiz",
+        fields: {
+          bullets: ["A. option", "B. option", "C. option", "D. option"],
+          correctIndex: "0-3",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { similarities: ["shared trait 1", "shared trait 2"], differences: ["SubjectA: key difference", "SubjectB: key difference"], takeaway: "1 sentence — the single most important insight from the comparison" },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          similarities: ["shared trait 1", "shared trait 2"],
+          differences: ["SubjectA: key difference", "SubjectB: key difference"],
+          takeaway:
+            "1 sentence — the single most important insight from the comparison",
+        },
       },
     ],
   },
@@ -628,32 +936,82 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "Causes and/or effects of a phenomenon",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { phenomenon: "1 sentence naming and defining the subject", context: "1-2 sentences on when/where/how it began with **bold** key terms", hookFact: "1 striking statistic or vivid fact that makes the scale real" },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          phenomenon: "1 sentence naming and defining the subject",
+          context:
+            "1-2 sentences on when/where/how it began with **bold** key terms",
+          hookFact:
+            "1 striking statistic or vivid fact that makes the scale real",
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "background — the causal mechanism at a high level",
-        fields: { causeName: "overarching name of the primary cause chain", mechanism: "2-3 sentences on HOW the causes produce the outcome with **bold** key terms", evidence: "1 sentence citing a specific stat or historical example" },
+        n: 2,
+        slideType: "explanation",
+        purpose: "background — the causal mechanism at a high level",
+        fields: {
+          causeName: "overarching name of the primary cause chain",
+          mechanism:
+            "2-3 sentences on HOW the causes produce the outcome with **bold** key terms",
+          evidence: "1 sentence citing a specific stat or historical example",
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "3-4 main causes as cards",
-        fields: { columns: [{ label: "cause name", description: "1 sentence mechanism", imageQuery: "English photo query" }] },
+        n: 3,
+        slideType: "columns",
+        purpose: "3-4 main causes as cards",
+        fields: {
+          columns: [
+            {
+              label: "cause name",
+              description: "1 sentence mechanism",
+              imageQuery: "English photo query",
+            },
+          ],
+        },
       },
       {
-        n: "4-7", slideType: "explanation | fact", purpose: "one slide per cause or effect alternating",
-        fields: { causeName: "cause name  OR  effectName: effect name", mechanism: "2-3 sentences HOW this cause/effect operates with **bold** agents", scale: "1 sentence with a specific number or magnitude", realWorldExample: "1-2 sentences — concrete real-world instance students can relate to" },
+        n: "4-7",
+        slideType: "explanation | fact",
+        purpose: "one slide per cause or effect alternating",
+        fields: {
+          causeName: "cause name  OR  effectName: effect name",
+          mechanism:
+            "2-3 sentences HOW this cause/effect operates with **bold** agents",
+          scale: "1 sentence with a specific number or magnitude",
+          realWorldExample:
+            "1-2 sentences — concrete real-world instance students can relate to",
+        },
       },
       {
-        n: 8, slideType: "comparison", purpose: "key cause vs key effect placed side-by-side",
-        fields: { sideALabel: "Cause", sideBLabel: "Effect", sideAContent: "2-3 sentences on the primary cause", sideBContent: "2-3 sentences on the primary effect" },
+        n: 8,
+        slideType: "comparison",
+        purpose: "key cause vs key effect placed side-by-side",
+        fields: {
+          sideALabel: "Cause",
+          sideBLabel: "Effect",
+          sideAContent: "2-3 sentences on the primary cause",
+          sideBContent: "2-3 sentences on the primary effect",
+        },
       },
       {
-        n: 9, slideType: "reflection",
-        fields: { content: "1-2 sentences asking students to think about their own role in this cause-effect chain — second person (you)" },
+        n: 9,
+        slideType: "reflection",
+        fields: {
+          content:
+            "1-2 sentences asking students to think about their own role in this cause-effect chain — second person (you)",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { mainCauses: ["cause 1 label", "cause 2 label"], mainEffects: ["effect 1 label", "effect 2 label"], bigPicture: "1 sentence — the most important lesson about this cause-effect relationship" },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          mainCauses: ["cause 1 label", "cause 2 label"],
+          mainEffects: ["effect 1 label", "effect 2 label"],
+          bigPicture:
+            "1 sentence — the most important lesson about this cause-effect relationship",
+        },
       },
     ],
   },
@@ -662,44 +1020,107 @@ const CATEGORY_SLIDE_STRUCTURES: Record<string, object> = {
     description: "One focused concept, organism, person, or idea",
     slides: [
       {
-        n: 1, slideType: "intro",
-        fields: { hook: "1-2 sentences creating curiosity or surprise", definition: "1 clear precise definition with **bold** subject name", whyItMatters: "1 sentence — real-world relevance or importance" },
+        n: 1,
+        slideType: "intro",
+        fields: {
+          hook: "1-2 sentences creating curiosity or surprise",
+          definition: "1 clear precise definition with **bold** subject name",
+          whyItMatters: "1 sentence — real-world relevance or importance",
+        },
       },
       {
-        n: 2, slideType: "explanation", purpose: "define and unpack the subject in depth",
-        fields: { content: "4-5 rich sentences — mechanism, origin, or defining properties with **bold** key terms" },
+        n: 2,
+        slideType: "explanation",
+        purpose: "define and unpack the subject in depth",
+        fields: {
+          content:
+            "4-5 rich sentences — mechanism, origin, or defining properties with **bold** key terms",
+        },
       },
       {
-        n: 3, slideType: "columns", purpose: "3-4 key features or aspects as cards",
-        fields: { columns: [{ label: "feature name", description: "1 sentence description", imageQuery: "English photo query" }] },
+        n: 3,
+        slideType: "columns",
+        purpose: "3-4 key features or aspects as cards",
+        fields: {
+          columns: [
+            {
+              label: "feature name",
+              description: "1 sentence description",
+              imageQuery: "English photo query",
+            },
+          ],
+        },
       },
       {
-        n: 4, slideType: "fact",
-        fields: { keyStatement: "1 surprising impactful sentence max 22 words", content: "2-3 sentences expanding with context/evidence/examples" },
+        n: 4,
+        slideType: "fact",
+        fields: {
+          keyStatement: "1 surprising impactful sentence max 22 words",
+          content: "2-3 sentences expanding with context/evidence/examples",
+        },
       },
       {
-        n: 5, slideType: "example",
-        fields: { context: "1 sentence framing what kind of examples follow", instances: ["concrete example 1 with **bold** key terms", "concrete example 2", "concrete example 3"] },
+        n: 5,
+        slideType: "example",
+        fields: {
+          context: "1 sentence framing what kind of examples follow",
+          instances: [
+            "concrete example 1 with **bold** key terms",
+            "concrete example 2",
+            "concrete example 3",
+          ],
+        },
       },
       {
-        n: 6, slideType: "explanation", purpose: "deeper layer — mechanism, controversy, or real-world application",
-        fields: { content: "4-5 sentences on a distinctly different aspect from slide 2 with **bold** key terms" },
+        n: 6,
+        slideType: "explanation",
+        purpose:
+          "deeper layer — mechanism, controversy, or real-world application",
+        fields: {
+          content:
+            "4-5 sentences on a distinctly different aspect from slide 2 with **bold** key terms",
+        },
       },
       {
-        n: 7, slideType: "fact",
-        fields: { keyStatement: "1 surprising impactful sentence — different from slide 4", content: "2-3 sentences expanding with new context or evidence" },
+        n: 7,
+        slideType: "fact",
+        fields: {
+          keyStatement:
+            "1 surprising impactful sentence — different from slide 4",
+          content: "2-3 sentences expanding with new context or evidence",
+        },
       },
       {
-        n: 8, slideType: "example",
-        fields: { context: "1 sentence framing the examples", instances: ["concrete example 1", "concrete example 2", "concrete example 3"] },
+        n: 8,
+        slideType: "example",
+        fields: {
+          context: "1 sentence framing the examples",
+          instances: [
+            "concrete example 1",
+            "concrete example 2",
+            "concrete example 3",
+          ],
+        },
       },
       {
-        n: 9, slideType: "quiz",
-        fields: { bullets: ["A. option", "B. option", "C. option", "D. option"], correctIndex: "0-3" },
+        n: 9,
+        slideType: "quiz",
+        fields: {
+          bullets: ["A. option", "B. option", "C. option", "D. option"],
+          correctIndex: "0-3",
+        },
       },
       {
-        n: 10, slideType: "recap",
-        fields: { bullets: ["takeaway 1 starting with active verb or subject name", "takeaway 2", "takeaway 3", "takeaway 4"] },
+        n: 10,
+        slideType: "recap",
+        fields: {
+          bullets: [
+            "takeaway 1 starting with active verb or subject name",
+            "takeaway 2",
+            "takeaway 3",
+            "takeaway 4",
+          ],
+        },
       },
     ],
   },
@@ -712,12 +1133,20 @@ function safeJsonParse(text: string) {
     .replace(/\s*```\s*$/i, "")
     .trim();
   // Try direct parse first
-  try { return JSON.parse(clean); } catch { /* fall through */ }
+  try {
+    return JSON.parse(clean);
+  } catch {
+    /* fall through */
+  }
   // Extract first {...} block in case model added preamble/postamble
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
   if (start !== -1 && end > start) {
-    try { return JSON.parse(clean.slice(start, end + 1)); } catch { /* fall through */ }
+    try {
+      return JSON.parse(clean.slice(start, end + 1));
+    } catch {
+      /* fall through */
+    }
   }
   return null;
 }
@@ -738,9 +1167,15 @@ function buildOutlinePrompt(params: {
   hasCyrillic: boolean;
 }): string {
   const {
-    topic, grade, curriculum, curriculumContext,
-    categorySlideSequence, categorySlideStructureJson, effectiveSlideCount,
-    isUzbekCurriculum, hasCyrillic,
+    topic,
+    grade,
+    curriculum,
+    curriculumContext,
+    categorySlideSequence,
+    categorySlideStructureJson,
+    effectiveSlideCount,
+    isUzbekCurriculum,
+    hasCyrillic,
   } = params;
 
   const imageQueryEnglishRule = `\n- imageQuery MUST be in English (stock photo API). ✓ "volcano eruption lava flow"  ✗ "vulqon otilishi"`;
@@ -753,7 +1188,9 @@ function buildOutlinePrompt(params: {
 
   return `Outline a ${effectiveSlideCount}-slide lesson deck.
 
-Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${curriculum ? `\nCurriculum: ${curriculum}` : ""}${curriculumContext ? `\n\nCurriculum context:\n${curriculumContext}` : ""}
+Topic: ${topic}${grade ? `\nGrade: ${grade}` : ""}${
+    curriculum ? `\nCurriculum: ${curriculum}` : ""
+  }${curriculumContext ? `\n\nCurriculum context:\n${curriculumContext}` : ""}
 
 ${categorySlideSequence}
 
@@ -794,9 +1231,20 @@ function buildSlideContentPrompt(params: {
   ragContext?: string; // reserved for Graph RAG integration
 }): string {
   const {
-    slide, slideIndex, totalSlides, topic, grade, deckTitle,
-    outlineSummary, otherSlideTitles, isPrimary, topicType, boldInstruction, formulaInstruction,
-    languageInstruction, ragContext,
+    slide,
+    slideIndex,
+    totalSlides,
+    topic,
+    grade,
+    deckTitle,
+    outlineSummary,
+    otherSlideTitles,
+    isPrimary,
+    topicType,
+    boldInstruction,
+    formulaInstruction,
+    languageInstruction,
+    ragContext,
   } = params;
 
   const isComparison = slide.slideType === "comparison";
@@ -805,7 +1253,8 @@ function buildSlideContentPrompt(params: {
   const isFact = slide.slideType === "fact";
   const isExample = slide.slideType === "example";
   const isIntro = slide.slideType === "intro";
-  const isReflection = slide.slideType === "reflection" || slide.slideType === "question";
+  const isReflection =
+    slide.slideType === "reflection" || slide.slideType === "question";
   const isFormulaTopic = formulaInstruction !== "";
 
   // Schema and rules vary by slide type so each slide gets the right content shape
@@ -828,7 +1277,9 @@ function buildSlideContentPrompt(params: {
     }
   } else {
     // Secondary grades — use category-specific schema first, then fall back to generic per slide type
-    const catSchema = !isComparison ? getCategorySchema(topicType, slide.slideType) : null;
+    const catSchema = !isComparison
+      ? getCategorySchema(topicType, slide.slideType)
+      : null;
     if (catSchema) {
       schemaHint = catSchema.schemaHint;
       contentRules = catSchema.contentRules;
@@ -860,11 +1311,18 @@ function buildSlideContentPrompt(params: {
     }
   }
 
-  const avoidList = otherSlideTitles.length > 0
-    ? `\nANTI-REPETITION — Do NOT cover these topics (they belong to other slides):\n${otherSlideTitles.map(t => `  • ${t}`).join("\n")}\nWrite ONLY about what is unique to "${slide.title}". Every fact, example, and sentence must be specific to this slide's angle — do not restate generic topic introductions.`
-    : "";
+  const avoidList =
+    otherSlideTitles.length > 0
+      ? `\nANTI-REPETITION — Do NOT cover these topics (they belong to other slides):\n${otherSlideTitles
+          .map((t) => `  • ${t}`)
+          .join("\n")}\nWrite ONLY about what is unique to "${
+          slide.title
+        }". Every fact, example, and sentence must be specific to this slide's angle — do not restate generic topic introductions.`
+      : "";
 
-  return `Write content for slide ${slideIndex + 1}/${totalSlides} in a lesson deck.
+  return `Write content for slide ${
+    slideIndex + 1
+  }/${totalSlides} in a lesson deck.
 
 Deck: "${deckTitle}" | Topic: ${topic}${grade ? ` | Grade: ${grade}` : ""}
 This slide: "${slide.title}" (type: ${slide.slideType})
@@ -911,28 +1369,49 @@ export async function POST(req: Request) {
 
     // ── Topic structure pre-pass (two steps) ──────────────────────────────────
     // Step 1: ultra-fast call → returns ONLY the category name as plain text.
-    const VALID_TOPIC_TYPES = ["collection", "process", "narrative", "comparison", "cause-effect", "formula", "single-subject"];
+    const VALID_TOPIC_TYPES = [
+      "collection",
+      "process",
+      "narrative",
+      "comparison",
+      "cause-effect",
+      "formula",
+      "single-subject",
+    ];
     const rawCategory = await classifyTopicCategory(topic);
-    const safeTopicType = VALID_TOPIC_TYPES.includes(rawCategory) ? rawCategory : "single-subject";
+    const safeTopicType = VALID_TOPIC_TYPES.includes(rawCategory)
+      ? rawCategory
+      : "single-subject";
 
     // Step 2: category-aware structure items call (sequential — needs category).
     const structureItems = await getStructureItems(topic, safeTopicType);
 
     // Resolve per-category slide JSON structure (synchronous lookup).
-    const slideStructure = CATEGORY_SLIDE_STRUCTURES[safeTopicType] ?? CATEGORY_SLIDE_STRUCTURES["single-subject"];
+    const slideStructure =
+      CATEGORY_SLIDE_STRUCTURES[safeTopicType] ??
+      CATEGORY_SLIDE_STRUCTURES["single-subject"];
     const categorySlideStructureJson = JSON.stringify(slideStructure, null, 2);
 
-    const categorySlideSequence = buildCategorySlideSequence(safeTopicType, structureItems, isPrimary);
+    const categorySlideSequence = buildCategorySlideSequence(
+      safeTopicType,
+      structureItems,
+      isPrimary
+    );
 
     // ── Language handling ──────────────────────────────────────────────────────
-    const isUzbekCurriculum = curriculum.replace(/[''']/g, "'").includes("O'zbekiston");
+    const isUzbekCurriculum = curriculum
+      .replace(/[''']/g, "'")
+      .includes("O'zbekiston");
 
     // ── Curriculum RAG (O'zbekiston DTS only for now) ──────────────────────
     let curriculumContext = "";
     let debugRagLessons: Awaited<ReturnType<typeof searchCurriculum>> = [];
     if (isUzbekCurriculum && numericGrade === 5) {
       debugRagLessons = await searchCurriculum(topic, "uzbek-dts", 5, 5);
-      curriculumContext = await compressCurriculumContext(topic, debugRagLessons);
+      curriculumContext = await compressCurriculumContext(
+        topic,
+        debugRagLessons
+      );
     }
     const hasCyrillic = /[\u0400-\u04FF]/.test(topic);
     const imageQueryEnglishRule = `\n- CRITICAL: "imageQuery" is sent to English-language stock photo APIs. It MUST be written in English regardless of the topic language. Never write imageQuery in Uzbek, Russian, or any other language.\n  ✗ WRONG:   "imageQuery": "vulqon va tog' taqqoslash"\n  ✓ CORRECT: "imageQuery": "volcano mountain comparison"`;
@@ -944,15 +1423,16 @@ export async function POST(req: Request) {
 
     const boldInstruction = buildBoldInstruction(safeTopicType);
 
-    const formulaInstruction = safeTopicType === "formula"
-      ? `\n\nFORMULA/RULE TOPIC — CRITICAL:
+    const formulaInstruction =
+      safeTopicType === "formula"
+        ? `\n\nFORMULA/RULE TOPIC — CRITICAL:
 - ACCURACY IS NON-NEGOTIABLE. Every formula, notation, and rule must be factually and grammatically correct. Write components in the correct order. Double-check before returning.
 - The PRIMARY goal is to show STRUCTURE and NOTATION, not facts. Every slide must reinforce the formula.
 - Slide 2 MUST display ONLY the single primary/canonical notation — one concise line using exact symbols (e.g. **S** + **have/has** + **V3**, **a²** + **b²** = **c²**, **F** = **m** × **a**). Do NOT list multiple variants, forms, or cases here. Each variant (negative, interrogative, rearrangements, special cases, etc.) gets its own dedicated slide later (slides 4–8).
 - Slide 3 columns MUST break the formula into its named components — one card per component. Each column imageQuery MUST be a metaphorical scene representing that component (e.g. for "subject" → "person raising hand to speak in a group", for "helper verb" → "mechanic using a wrench to fix an engine", for "past participle" → "completed jigsaw puzzle on a table").
 - Every explanation and example slide MUST include example sentences or worked calculations using the formula — do NOT write generic facts about the topic.
 - NEVER use slideType "fact" — this is a formula topic. Every content slide must be "explanation" or "example". Slides with slideType "fact" will be rejected.`
-      : "";
+        : "";
 
     // ── Phase 1: Generate outline ──────────────────────────────────────────────
     // Returns titles, slideTypes, imageQueries, and columns cards for all slides.
@@ -1003,7 +1483,11 @@ export async function POST(req: Request) {
         if (slide.slideType === "columns") return Promise.resolve({});
 
         const otherSlideTitles = (outlineParsed.slides as any[])
-          .filter((_: any, j: number) => j !== i && (outlineParsed.slides as any[])[j].slideType !== "columns")
+          .filter(
+            (_: any, j: number) =>
+              j !== i &&
+              (outlineParsed.slides as any[])[j].slideType !== "columns"
+          )
           .map((s: any) => s.title as string);
 
         const prompt = buildSlideContentPrompt({
@@ -1028,18 +1512,22 @@ export async function POST(req: Request) {
           debugSampleContentPrompt = prompt;
         }
 
-        return openai.chat.completions.create({
-          // Formula/grammar topics use mini for better factual accuracy (V-ing vs V3, etc.)
-          model: safeTopicType === "formula" ? "gpt-4.1-mini" : "gpt-4.1-nano",
-          temperature: safeTopicType === "formula" ? 0.3 : 0.9,
-          max_tokens: isPrimary ? 500 : 900,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: "Return strict JSON only." },
-            { role: "user", content: prompt },
-          ],
-        })
-          .then((r) => safeJsonParse(r.choices[0]?.message?.content ?? "") ?? {})
+        return openai.chat.completions
+          .create({
+            // Formula/grammar topics use mini for better factual accuracy (V-ing vs V3, etc.)
+            model:
+              safeTopicType === "formula" ? "gpt-4.1-mini" : "gpt-4.1-nano",
+            temperature: safeTopicType === "formula" ? 0.3 : 0.9,
+            max_tokens: isPrimary ? 500 : 900,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "Return strict JSON only." },
+              { role: "user", content: prompt },
+            ],
+          })
+          .then(
+            (r) => safeJsonParse(r.choices[0]?.message?.content ?? "") ?? {}
+          )
           .catch((err) => {
             console.error(`Slide ${i + 1} content error:`, err);
             return {};
@@ -1050,7 +1538,10 @@ export async function POST(req: Request) {
     // ── Merge outline + content → same shape as before ────────────────────────
     // The merged slides match the structure the post-processing block expects.
     const mergedSlides = (outlineParsed.slides as any[]).map(
-      (outlineSlide: any, i: number) => ({ ...outlineSlide, ...contentResults[i] })
+      (outlineSlide: any, i: number) => ({
+        ...outlineSlide,
+        ...contentResults[i],
+      })
     );
 
     // ── Normalize category-specific fields → standard content fields ──────────
@@ -1061,42 +1552,69 @@ export async function POST(req: Request) {
       const type = s.slideType ?? "";
       // Helper: join multiple string values into one content string
       const join = (...vals: (string | null | undefined)[]) =>
-        vals.filter((v): v is string => typeof v === "string" && v.trim().length > 0).join("\n\n");
+        vals
+          .filter(
+            (v): v is string => typeof v === "string" && v.trim().length > 0
+          )
+          .join("\n\n");
 
       switch (topicType) {
         case "formula":
           if (type === "intro") {
             if (!s.content && s.mainParagraph) s.content = s.mainParagraph;
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.lessonAimText)) s.bullets = s.lessonAimText;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.lessonAimText)
+            )
+              s.bullets = s.lessonAimText;
           } else if (type === "explanation") {
             if (!s.formulaBox && s.notation) s.formulaBox = s.notation;
-            if (!s.content && s.notationBreakdown) s.content = s.notationBreakdown;
+            if (!s.content && s.notationBreakdown)
+              s.content = s.notationBreakdown;
           } else if (type === "example") {
             if (!s.content) s.content = join(s.usageCase);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.workedSteps)) s.bullets = s.workedSteps;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.workedSteps)
+            )
+              s.bullets = s.workedSteps;
           } else if (type === "recap") {
-            if (!s.keyStatement && s.fullNotation) s.keyStatement = s.fullNotation;
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.usageRules)) s.bullets = s.usageRules;
+            if (!s.keyStatement && s.fullNotation)
+              s.keyStatement = s.fullNotation;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.usageRules)
+            )
+              s.bullets = s.usageRules;
           }
           break;
 
         case "process":
           if (type === "intro") {
             if (!s.content) s.content = join(s.hook);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.aimPoints)) s.bullets = s.aimPoints;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.aimPoints)
+            )
+              s.bullets = s.aimPoints;
           } else if (type === "explanation") {
             if (!s.keyStatement && s.stepName) s.keyStatement = s.stepName;
             if (!s.content) s.content = join(s.whatHappens, s.whyItMatters);
           } else if (type === "recap") {
             if (!s.content) s.content = join(s.keyTakeaway);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.sequence)) s.bullets = s.sequence;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.sequence)
+            )
+              s.bullets = s.sequence;
           }
           break;
 
         case "narrative":
           if (type === "intro") {
             if (!s.content) s.content = join(s.hook, s.significance);
-            if ((!s.bullets || s.bullets.length === 0) && s.timeSpan) s.bullets = [s.timeSpan];
+            if ((!s.bullets || s.bullets.length === 0) && s.timeSpan)
+              s.bullets = [s.timeSpan];
           } else if (type === "explanation") {
             if (!s.keyStatement && s.period) s.keyStatement = s.period;
             if (!s.content) s.content = join(s.event, s.impact);
@@ -1105,30 +1623,44 @@ export async function POST(req: Request) {
             if (!s.content) s.content = join(s.moment, s.legacy);
           } else if (type === "recap") {
             if (!s.content) s.content = join(s.bigPicture);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.timeline)) s.bullets = s.timeline;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.timeline)
+            )
+              s.bullets = s.timeline;
           }
           break;
 
         case "collection":
           if (type === "intro") {
             if (!s.content) s.content = join(s.overview);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.subjects)) s.bullets = s.subjects;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.subjects)
+            )
+              s.bullets = s.subjects;
           } else if (type === "explanation") {
-            if (!s.keyStatement && s.subjectName) s.keyStatement = s.subjectName;
+            if (!s.keyStatement && s.subjectName)
+              s.keyStatement = s.subjectName;
             if (!s.content) s.content = join(s.headline, s.details);
           } else if (type === "fact") {
-            if (!s.keyStatement && s.subjectName) s.keyStatement = s.subjectName;
+            if (!s.keyStatement && s.subjectName)
+              s.keyStatement = s.subjectName;
             if (!s.content) s.content = join(s.standoutFact, s.context);
           } else if (type === "recap") {
             if (!s.content) s.content = join(s.bigIdea);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.highlights)) s.bullets = s.highlights;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.highlights)
+            )
+              s.bullets = s.highlights;
           }
           break;
 
         case "comparison":
           if (type === "intro") {
             if (!s.content) s.content = join(s.centralQuestion);
-            if ((!s.bullets || s.bullets.length === 0)) {
+            if (!s.bullets || s.bullets.length === 0) {
               const parts = [s.subjectA, s.subjectB].filter(Boolean);
               if (parts.length > 0) s.bullets = parts;
             }
@@ -1138,7 +1670,10 @@ export async function POST(req: Request) {
           } else if (type === "recap") {
             if (!s.content) s.content = join(s.takeaway);
             if (!s.bullets || s.bullets.length === 0) {
-              const combined = [...(Array.isArray(s.similarities) ? s.similarities : []), ...(Array.isArray(s.differences) ? s.differences : [])];
+              const combined = [
+                ...(Array.isArray(s.similarities) ? s.similarities : []),
+                ...(Array.isArray(s.differences) ? s.differences : []),
+              ];
               if (combined.length > 0) s.bullets = combined;
             }
           }
@@ -1147,7 +1682,8 @@ export async function POST(req: Request) {
         case "cause-effect":
           if (type === "intro") {
             if (!s.content) s.content = join(s.phenomenon, s.context);
-            if ((!s.bullets || s.bullets.length === 0) && s.hookFact) s.bullets = [s.hookFact];
+            if ((!s.bullets || s.bullets.length === 0) && s.hookFact)
+              s.bullets = [s.hookFact];
           } else if (type === "explanation") {
             if (!s.keyStatement && s.causeName) s.keyStatement = s.causeName;
             if (!s.content) s.content = join(s.mechanism, s.evidence);
@@ -1157,7 +1693,10 @@ export async function POST(req: Request) {
           } else if (type === "recap") {
             if (!s.content) s.content = join(s.bigPicture);
             if (!s.bullets || s.bullets.length === 0) {
-              const combined = [...(Array.isArray(s.mainCauses) ? s.mainCauses : []), ...(Array.isArray(s.mainEffects) ? s.mainEffects : [])];
+              const combined = [
+                ...(Array.isArray(s.mainCauses) ? s.mainCauses : []),
+                ...(Array.isArray(s.mainEffects) ? s.mainEffects : []),
+              ];
               if (combined.length > 0) s.bullets = combined;
             }
           }
@@ -1165,37 +1704,77 @@ export async function POST(req: Request) {
 
         case "single-subject":
           if (type === "intro") {
-            if (!s.content) s.content = join(s.hook, s.definition, s.whyItMatters);
+            if (!s.content)
+              s.content = join(s.hook, s.definition, s.whyItMatters);
           } else if (type === "example") {
             if (!s.content) s.content = join(s.context);
-            if ((!s.bullets || s.bullets.length === 0) && Array.isArray(s.instances)) s.bullets = s.instances;
+            if (
+              (!s.bullets || s.bullets.length === 0) &&
+              Array.isArray(s.instances)
+            )
+              s.bullets = s.instances;
           }
           break;
       }
       return s;
     }
 
-    const normalizedSlides = mergedSlides.map((s: any) => normalizeCategoryFields(s, safeTopicType));
+    const normalizedSlides = mergedSlides.map((s: any) =>
+      normalizeCategoryFields(s, safeTopicType)
+    );
 
     // Treat as `parsed` so the post-processing block below is unchanged.
-    const parsed = { deckTitle: outlineParsed.deckTitle, slides: normalizedSlides };
+    const parsed = {
+      deckTitle: outlineParsed.deckTitle,
+      slides: normalizedSlides,
+    };
 
     // ── Post-processing (unchanged) ────────────────────────────────────────────
-    const VALID_SLIDE_TYPES = ["intro","explanation","example","fact","comparison","columns","reflection","question","quiz","recap"];
-    const NO_IMAGE_SLIDE_TYPES = new Set(["reflection","question","quiz","recap","columns"]);
+    const VALID_SLIDE_TYPES = [
+      "intro",
+      "explanation",
+      "example",
+      "fact",
+      "comparison",
+      "columns",
+      "reflection",
+      "question",
+      "quiz",
+      "recap",
+    ];
+    const NO_IMAGE_SLIDE_TYPES = new Set([
+      "reflection",
+      "question",
+      "quiz",
+      "recap",
+      "columns",
+    ]);
     // Catch common AI variants that don't match the schema (e.g. "true_false", "true/false", "Comparison")
     // Also covers Uzbek Latin and Russian/Uzbek Cyrillic equivalents when slideType is null.
-    const NO_IMAGE_TITLE_RE = /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
+    const NO_IMAGE_TITLE_RE =
+      /\b(quiz|true[\s/_-]?(?:or[\s/_-]?)?false|reflect(?:ion)?|recap|review|viktorina|xulosa|takrorlash|mulohaza|fikrlash)\b|викторин[аы]|тест(?![а-яёА-ЯЁ])|размышлени[еяй]|рефлекси[ия]|повторени[еяй]|хулоса|такрорлаш|мулоҳаза|фикрлаш/i;
 
     const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
       .filter((s: any) => s != null)
       .slice(0, effectiveSlideCount)
       .map((s: any) => {
         // Normalize slideType: lowercase + trim so AI variants like "Comparison" still match
-        const rawType = typeof s.slideType === "string" ? s.slideType.toLowerCase().trim() : "";
-        let slideType: string | null = VALID_SLIDE_TYPES.includes(rawType) ? rawType : null;
+        const rawType =
+          typeof s.slideType === "string"
+            ? s.slideType.toLowerCase().trim()
+            : "";
+        let slideType: string | null = VALID_SLIDE_TYPES.includes(rawType)
+          ? rawType
+          : null;
         // Fallback: if AI returned sideA/sideB fields but forgot slideType:"comparison", infer it
-        if (!slideType && (s.sideALabel || s.sideAContent || s.sideABullets || s.sideBContent || s.sideBBullets)) {
+        if (
+          !slideType &&
+          (s.sideALabel ||
+            s.sideAContent ||
+            s.sideABullets ||
+            s.sideBContent ||
+            s.sideBBullets)
+        ) {
           slideType = "comparison";
         }
         // Fallback: if AI returned a columns array but forgot slideType:"columns", infer it
@@ -1212,21 +1791,43 @@ export async function POST(req: Request) {
           ...(isPrimary && !isColumns
             ? {
                 // Fallback: if AI omitted bullets but provided sideA/B (confused non-comparison slide), merge them
-                bullets: Array.isArray(s.bullets) && s.bullets.length > 0
-                  ? s.bullets
-                  : !isComparison && (Array.isArray(s.sideABullets) || Array.isArray(s.sideBBullets))
-                  ? [...(Array.isArray(s.sideABullets) ? s.sideABullets : []), ...(Array.isArray(s.sideBBullets) ? s.sideBBullets : [])]
-                  : typeof s.content === "string" && s.content.trim()
-                  ? s.content.split(/(?<=[.!?])\s+/).filter(Boolean)
-                  : [],
+                bullets:
+                  Array.isArray(s.bullets) && s.bullets.length > 0
+                    ? s.bullets
+                    : !isComparison &&
+                      (Array.isArray(s.sideABullets) ||
+                        Array.isArray(s.sideBBullets))
+                    ? [
+                        ...(Array.isArray(s.sideABullets)
+                          ? s.sideABullets
+                          : []),
+                        ...(Array.isArray(s.sideBBullets)
+                          ? s.sideBBullets
+                          : []),
+                      ]
+                    : typeof s.content === "string" && s.content.trim()
+                    ? s.content.split(/(?<=[.!?])\s+/).filter(Boolean)
+                    : [],
               }
             : !isColumns
             ? {
                 // Secondary grades: paragraph content + optional keyStatement/bullets/formulaBox
-                keyStatement: typeof s.keyStatement === "string" && s.keyStatement.trim() ? s.keyStatement.trim() : null,
-                content: typeof s.content === "string" && s.content.trim() ? s.content.trim() : null,
-                bullets: Array.isArray(s.bullets) && s.bullets.length > 0 ? s.bullets : [],
-                formulaBox: typeof s.formulaBox === "string" && s.formulaBox.trim() ? s.formulaBox.trim() : null,
+                keyStatement:
+                  typeof s.keyStatement === "string" && s.keyStatement.trim()
+                    ? s.keyStatement.trim()
+                    : null,
+                content:
+                  typeof s.content === "string" && s.content.trim()
+                    ? s.content.trim()
+                    : null,
+                bullets:
+                  Array.isArray(s.bullets) && s.bullets.length > 0
+                    ? s.bullets
+                    : [],
+                formulaBox:
+                  typeof s.formulaBox === "string" && s.formulaBox.trim()
+                    ? s.formulaBox.trim()
+                    : null,
               }
             : {}),
           ...(isComparison && {
@@ -1234,24 +1835,44 @@ export async function POST(req: Request) {
             sideBLabel: s.sideBLabel ?? null,
             ...(isPrimary
               ? {
-                  sideABullets: Array.isArray(s.sideABullets) ? s.sideABullets : null,
-                  sideBBullets: Array.isArray(s.sideBBullets) ? s.sideBBullets : null,
+                  sideABullets: Array.isArray(s.sideABullets)
+                    ? s.sideABullets
+                    : null,
+                  sideBBullets: Array.isArray(s.sideBBullets)
+                    ? s.sideBBullets
+                    : null,
                 }
               : (() => {
                   // Use explicit side fields when provided (truthy check — empty string is not valid content)
                   if (s.sideAContent || s.sideBContent) {
-                    return { sideAContent: s.sideAContent || null, sideBContent: s.sideBContent || null };
+                    return {
+                      sideAContent: s.sideAContent || null,
+                      sideBContent: s.sideBContent || null,
+                    };
                   }
                   // Fallback: AI returned bullets instead of side content — split them
-                  if (Array.isArray(s.sideABullets) && s.sideABullets.length > 0) {
-                    return { sideAContent: s.sideABullets.join(" "), sideBContent: Array.isArray(s.sideBBullets) ? s.sideBBullets.join(" ") : null };
+                  if (
+                    Array.isArray(s.sideABullets) &&
+                    s.sideABullets.length > 0
+                  ) {
+                    return {
+                      sideAContent: s.sideABullets.join(" "),
+                      sideBContent: Array.isArray(s.sideBBullets)
+                        ? s.sideBBullets.join(" ")
+                        : null,
+                    };
                   }
                   // Fallback: split content field in half between the two sides
                   const raw = (s.content ?? "").trim();
                   if (raw) {
-                    const sentences = raw.split(/(?<=[.!?]['"'"\u2018\u2019\u201c\u201d]?)\s+/).filter((x: string) => x.trim());
+                    const sentences = raw
+                      .split(/(?<=[.!?]['"'"\u2018\u2019\u201c\u201d]?)\s+/)
+                      .filter((x: string) => x.trim());
                     const mid = Math.ceil(sentences.length / 2);
-                    return { sideAContent: sentences.slice(0, mid).join(" ") || null, sideBContent: sentences.slice(mid).join(" ") || null };
+                    return {
+                      sideAContent: sentences.slice(0, mid).join(" ") || null,
+                      sideBContent: sentences.slice(mid).join(" ") || null,
+                    };
                   }
                   return { sideAContent: null, sideBContent: null };
                 })()),
@@ -1260,32 +1881,58 @@ export async function POST(req: Request) {
             columns: Array.isArray(s.columns)
               ? s.columns.slice(0, 4).map((c: any) => ({
                   label: typeof c.label === "string" ? c.label : "",
-                  description: typeof c.description === "string" ? c.description : "",
-                  imageQuery: typeof c.imageQuery === "string" && c.imageQuery.trim() ? c.imageQuery.trim() : null,
+                  description:
+                    typeof c.description === "string" ? c.description : "",
+                  imageQuery:
+                    typeof c.imageQuery === "string" && c.imageQuery.trim()
+                      ? c.imageQuery.trim()
+                      : null,
                 }))
               : null,
           }),
           ...(slideType === "quiz" && {
-            correctIndex: typeof s.correctIndex === "number" ? s.correctIndex : null,
+            correctIndex:
+              typeof s.correctIndex === "number" ? s.correctIndex : null,
           }),
           // Pass through any category-specific fields the AI returned that aren't
           // already covered by the standard post-processing above.
           ...(() => {
             const STANDARD_FIELDS = new Set([
-              "title","slideType","imageQuery","imageStrategy","visualType",
-              "columns","bullets","content","keyStatement","formulaBox",
-              "sideALabel","sideBLabel","sideAContent","sideBContent",
-              "sideABullets","sideBBullets","correctIndex",
+              "title",
+              "slideType",
+              "imageQuery",
+              "imageStrategy",
+              "visualType",
+              "columns",
+              "bullets",
+              "content",
+              "keyStatement",
+              "formulaBox",
+              "sideALabel",
+              "sideBLabel",
+              "sideAContent",
+              "sideBContent",
+              "sideABullets",
+              "sideBBullets",
+              "correctIndex",
             ]);
             return Object.fromEntries(
               Object.entries(s as Record<string, unknown>).filter(
-                ([k, v]) => !STANDARD_FIELDS.has(k) && v != null && v !== "",
-              ),
+                ([k, v]) => !STANDARD_FIELDS.has(k) && v != null && v !== ""
+              )
             );
           })(),
-          imageQuery: isNoImg ? null : (s.imageQuery ?? null),
-          imageStrategy: isNoImg ? null : ((s.imageStrategy === "literal" || s.imageStrategy === "metaphor") ? s.imageStrategy : null),
-          visualType: isNoImg ? null : ((s.visualType === "diagram" || s.visualType === "photo") ? s.visualType : null),
+          imageQuery: isNoImg ? null : s.imageQuery ?? null,
+          imageStrategy: isNoImg
+            ? null
+            : s.imageStrategy === "literal" || s.imageStrategy === "metaphor"
+            ? s.imageStrategy
+            : null,
+          visualType: isNoImg
+            ? null
+            : s.visualType === "diagram" || s.visualType === "photo"
+            ? s.visualType
+            : null,
           slideType,
         };
       })
@@ -1295,23 +1942,51 @@ export async function POST(req: Request) {
           return Array.isArray(s.columns) && s.columns.length > 0;
         }
         if (s.slideType === "comparison") {
-          const hasA = !!(s.sideAContent || (Array.isArray(s.sideABullets) && s.sideABullets.length));
-          const hasB = !!(s.sideBContent || (Array.isArray(s.sideBBullets) && s.sideBBullets.length));
+          const hasA = !!(
+            s.sideAContent ||
+            (Array.isArray(s.sideABullets) && s.sideABullets.length)
+          );
+          const hasB = !!(
+            s.sideBContent ||
+            (Array.isArray(s.sideBBullets) && s.sideBBullets.length)
+          );
           return hasA || hasB;
         }
         // Keep if has standard content fields
-        if (s.content && typeof s.content === "string" && s.content.trim()) return true;
-        if (s.keyStatement && typeof s.keyStatement === "string" && s.keyStatement.trim()) return true;
+        if (s.content && typeof s.content === "string" && s.content.trim())
+          return true;
+        if (
+          s.keyStatement &&
+          typeof s.keyStatement === "string" &&
+          s.keyStatement.trim()
+        )
+          return true;
         if (Array.isArray(s.bullets) && s.bullets.length > 0) return true;
         // Keep if has category-specific pass-through content (notation, mainParagraph, workedSteps, etc.)
         const STANDARD_FILTER_FIELDS = new Set([
-          "title","slideType","imageQuery","imageStrategy","visualType",
-          "columns","bullets","content","keyStatement","formulaBox",
-          "sideALabel","sideBLabel","sideAContent","sideBContent",
-          "sideABullets","sideBBullets","correctIndex",
+          "title",
+          "slideType",
+          "imageQuery",
+          "imageStrategy",
+          "visualType",
+          "columns",
+          "bullets",
+          "content",
+          "keyStatement",
+          "formulaBox",
+          "sideALabel",
+          "sideBLabel",
+          "sideAContent",
+          "sideBContent",
+          "sideABullets",
+          "sideBBullets",
+          "correctIndex",
         ]);
         return Object.entries(s as Record<string, unknown>).some(
-          ([k, v]) => !STANDARD_FILTER_FIELDS.has(k) && v != null && v !== "" &&
+          ([k, v]) =>
+            !STANDARD_FILTER_FIELDS.has(k) &&
+            v != null &&
+            v !== "" &&
             !(Array.isArray(v) && (v as unknown[]).length === 0)
         );
       });
@@ -1337,7 +2012,10 @@ export async function POST(req: Request) {
       // Also clear Cyrillic column imageQueries
       if (Array.isArray(s.columns)) {
         for (const col of s.columns as Array<Record<string, unknown>>) {
-          if (typeof col.imageQuery === "string" && CYRILLIC_RE.test(col.imageQuery)) {
+          if (
+            typeof col.imageQuery === "string" &&
+            CYRILLIC_RE.test(col.imageQuery)
+          ) {
             col.imageQuery = null;
           }
         }
@@ -1347,8 +2025,12 @@ export async function POST(req: Request) {
     // Step 2: If the deck appears non-English (Uzbek curriculum, Cyrillic/Arabic
     // in titles, or Uzbek Latin special chars), batch-translate all remaining
     // non-null imageQuery values to English in a single cheap call.
-    const UZBEK_LATIN_RE = /[\u02BB\u2018\u2019\u02BC]|[oO][\u02BB\u2018\u2019\u02BC']|[gG][\u02BB\u2018\u2019\u02BC']/;
-    const deckText = [parsed.deckTitle ?? "", ...slides.map((s: any) => s.title ?? "")].join(" ");
+    const UZBEK_LATIN_RE =
+      /[\u02BB\u2018\u2019\u02BC]|[oO][\u02BB\u2018\u2019\u02BC']|[gG][\u02BB\u2018\u2019\u02BC']/;
+    const deckText = [
+      parsed.deckTitle ?? "",
+      ...slides.map((s: any) => s.title ?? ""),
+    ].join(" ");
     const isNonEnglish =
       isUzbekCurriculum ||
       /[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF]/.test(deckText) ||
@@ -1359,24 +2041,37 @@ export async function POST(req: Request) {
     if (isNonEnglish) {
       const deckTitleRaw = parsed.deckTitle ?? topic;
       // Include the deckTitle at index 0 so slide 0's imageQuery is also correctly sourced
-      type TranslateItem = { i: number | "deck"; q: string } | { colSlide: number; colIdx: number; q: string };
+      type TranslateItem =
+        | { i: number | "deck"; q: string }
+        | { colSlide: number; colIdx: number; q: string };
       const toTranslate: TranslateItem[] = [
         { i: "deck", q: deckTitleRaw },
-        ...(slides as Array<Record<string, unknown>>)
-          .flatMap((s, i) => {
-            const items: TranslateItem[] = [];
-            if (typeof s.imageQuery === "string" && (s.imageQuery as string).trim()) {
-              items.push({ i, q: s.imageQuery as string });
-            }
-            if (Array.isArray(s.columns)) {
-              (s.columns as Array<Record<string, unknown>>).forEach((col, colIdx) => {
-                if (typeof col.imageQuery === "string" && (col.imageQuery as string).trim()) {
-                  items.push({ colSlide: i, colIdx, q: col.imageQuery as string });
+        ...(slides as Array<Record<string, unknown>>).flatMap((s, i) => {
+          const items: TranslateItem[] = [];
+          if (
+            typeof s.imageQuery === "string" &&
+            (s.imageQuery as string).trim()
+          ) {
+            items.push({ i, q: s.imageQuery as string });
+          }
+          if (Array.isArray(s.columns)) {
+            (s.columns as Array<Record<string, unknown>>).forEach(
+              (col, colIdx) => {
+                if (
+                  typeof col.imageQuery === "string" &&
+                  (col.imageQuery as string).trim()
+                ) {
+                  items.push({
+                    colSlide: i,
+                    colIdx,
+                    q: col.imageQuery as string,
+                  });
                 }
-              });
-            }
-            return items;
-          }),
+              }
+            );
+          }
+          return items;
+        }),
       ];
 
       if (toTranslate.length > 0) {
@@ -1387,20 +2082,31 @@ export async function POST(req: Request) {
             messages: [
               {
                 role: "user",
-                content: `Translate each item to a concise English stock photo search term (3–5 words). Return ONLY a JSON array of strings in the same order, no extra text.\n${JSON.stringify(toTranslate.map((x) => x.q))}`,
+                content: `Translate each item to a concise English stock photo search term (3–5 words). Return ONLY a JSON array of strings in the same order, no extra text.\n${JSON.stringify(
+                  toTranslate.map((x) => x.q)
+                )}`,
               },
             ],
           });
-          const translated = safeJsonParse(tx.choices[0]?.message?.content ?? "");
+          const translated = safeJsonParse(
+            tx.choices[0]?.message?.content ?? ""
+          );
           if (Array.isArray(translated)) {
             toTranslate.forEach((item, tIdx) => {
-              if (typeof translated[tIdx] === "string" && translated[tIdx].trim()) {
+              if (
+                typeof translated[tIdx] === "string" &&
+                translated[tIdx].trim()
+              ) {
                 if ("i" in item && item.i === "deck") {
                   englishDeckTitle = translated[tIdx].trim();
                 } else if ("i" in item) {
-                  (slides as Array<Record<string, unknown>>)[item.i as number].imageQuery = translated[tIdx].trim();
+                  (slides as Array<Record<string, unknown>>)[
+                    item.i as number
+                  ].imageQuery = translated[tIdx].trim();
                 } else if ("colSlide" in item) {
-                  const cols = (slides as Array<Record<string, unknown>>)[item.colSlide].columns as Array<Record<string, unknown>>;
+                  const cols = (slides as Array<Record<string, unknown>>)[
+                    item.colSlide
+                  ].columns as Array<Record<string, unknown>>;
                   if (cols?.[item.colIdx]) {
                     cols[item.colIdx].imageQuery = translated[tIdx].trim();
                   }
