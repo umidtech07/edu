@@ -137,11 +137,17 @@ ${causeLines}
           )
           .join("\n");
         const lastItemSlide = items.length + 3; // item i maps to slide i+4; last = items.length-1+4 = items.length+3
+        const GAP_SLIDE_ANGLES = [
+          "example — real-world application with a fully worked solution",
+          "example — common mistake + correction showing the rule",
+          "example — harder variant or extension of the formula",
+          "example — contrasting case highlighting when the rule does NOT apply",
+        ];
         const gapSlides: string[] = [];
         for (let s = lastItemSlide + 1; s <= 8; s++) {
-          gapSlides.push(
-            `  ${s}. example — additional worked example applying the formula`
-          );
+          const angle =
+            GAP_SLIDE_ANGLES[(s - lastItemSlide - 1) % GAP_SLIDE_ANGLES.length];
+          gapSlides.push(`  ${s}. ${angle}`);
         }
         itemLines =
           itemSlides +
@@ -1313,11 +1319,11 @@ function buildSlideContentPrompt(params: {
 
   const avoidList =
     otherSlideTitles.length > 0
-      ? `\nANTI-REPETITION — Do NOT cover these topics (they belong to other slides):\n${otherSlideTitles
+      ? `\nANTI-REPETITION — The following slides already exist in this deck. Do NOT repeat their content, definitions, or examples:\n${otherSlideTitles
           .map((t) => `  • ${t}`)
-          .join("\n")}\nWrite ONLY about what is unique to "${
+          .join("\n")}\nWrite ONLY what is unique to "${
           slide.title
-        }". Every fact, example, and sentence must be specific to this slide's angle — do not restate generic topic introductions.`
+        }". Every fact, example, and sentence must be new and specific to this slide's angle. Never restate definitions or examples already given on another slide.`
       : "";
 
   return `Write content for slide ${
@@ -1431,7 +1437,9 @@ export async function POST(req: Request) {
 - Slide 2 MUST display ONLY the single primary/canonical notation — one concise line using exact symbols (e.g. **S** + **have/has** + **V3**, **a²** + **b²** = **c²**, **F** = **m** × **a**). Do NOT list multiple variants, forms, or cases here. Each variant (negative, interrogative, rearrangements, special cases, etc.) gets its own dedicated slide later (slides 4–8).
 - Slide 3 columns MUST break the formula into its named components — one card per component. Each column imageQuery MUST be a metaphorical scene representing that component (e.g. for "subject" → "person raising hand to speak in a group", for "helper verb" → "mechanic using a wrench to fix an engine", for "past participle" → "completed jigsaw puzzle on a table").
 - Every explanation and example slide MUST include example sentences or worked calculations using the formula — do NOT write generic facts about the topic.
-- NEVER use slideType "fact" — this is a formula topic. Every content slide must be "explanation" or "example". Slides with slideType "fact" will be rejected.`
+- NEVER use slideType "fact" — this is a formula topic. Every content slide must be "explanation" or "example". Slides with slideType "fact" will be rejected.
+- SLIDES 4–8 MUST NOT re-define or re-explain what any symbol or variable stands for. Slides 2 and 3 already covered those definitions in full. NEVER write phrases like "F stands for force", "F means force", "m is mass", "where F is...", "S stands for subject" etc. on slides 4–8. Assume the student already knows the variable meanings — go straight to application.
+- Each example or explanation slide MUST use a DIFFERENT real-world scenario from every other slide in this deck. If one slide uses a car accelerating, another must use something entirely different (a rocket launch, a football kick, a swimmer pushing off, etc.). No two slides may share the same scenario, object, or numerical values.`
         : "";
 
     // ── Phase 1: Generate outline ──────────────────────────────────────────────
@@ -1488,7 +1496,7 @@ export async function POST(req: Request) {
               j !== i &&
               (outlineParsed.slides as any[])[j].slideType !== "columns"
           )
-          .map((s: any) => s.title as string);
+          .map((s: any) => `${s.title} [${s.slideType}]`);
 
         const prompt = buildSlideContentPrompt({
           slide,
