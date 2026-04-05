@@ -1,6 +1,10 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BookOpen, Lightbulb, Star, RotateCcw, HelpCircle, MessageCircle,
+  CheckCircle2, FlaskConical, Scale, Grid3x3, ClipboardList, Zap,
+} from "lucide-react";
 import { getFirebaseAuth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import type { User } from "firebase/auth";
@@ -108,6 +112,9 @@ type Slide = {
   title: string;
   bullets: string[];
   content?: string | null;
+  keyStatement?: string | null;
+  formulaBox?: string | null;
+  correctIndex?: number | null;
   image?: string | null;
   imageAlt?: string;
   imageSource?:
@@ -579,6 +586,9 @@ export default function Home() {
         title: s.title ?? "",
         bullets: s.bullets ?? [],
         content: s.content || null,
+        keyStatement: s.keyStatement ?? null,
+        formulaBox: s.formulaBox ?? null,
+        correctIndex: s.correctIndex ?? null,
         image: null,
         imageAlt: "",
         imageSource: null,
@@ -1018,23 +1028,42 @@ export default function Home() {
   const bulletAccentColor = "#166534";
 
   const slideTypeLabels: Record<string, string> = {
-    reflection: "💭 Reflect",
-    question: "❓ Question",
-    quiz: "📝 Quiz",
-    recap: "📋 Recap",
-    comparison: "⚖️ Compare",
-    columns: "🗂️ Grid",
-    fact: "⭐ Fact",
-    example: "💡 Example",
-    intro: "📖 Intro",
-    explanation: "🔍 Explain",
+    reflection: "Reflect",
+    question: "Question",
+    quiz: "Quiz",
+    recap: "Recap",
+    comparison: "Compare",
+    columns: "Grid",
+    fact: "Fact",
+    example: "Example",
+    intro: "Intro",
+    explanation: "Explain",
   };
-  const slideTypeLabel = isColumnsSlide
-    ? "🗂️ Grid"
+  const slideTypeIconMap: Record<string, React.ReactNode> = {
+    reflection: <MessageCircle size={12} />,
+    question: <HelpCircle size={12} />,
+    quiz: <ClipboardList size={12} />,
+    recap: <RotateCcw size={12} />,
+    comparison: <Scale size={12} />,
+    columns: <Grid3x3 size={12} />,
+    fact: <Star size={12} />,
+    example: <Lightbulb size={12} />,
+    intro: <BookOpen size={12} />,
+    explanation: <FlaskConical size={12} />,
+  };
+  const slideTypeLabelText = isColumnsSlide
+    ? "Grid"
     : isComparisonSlide
-    ? "⚖️ Compare"
+    ? "Compare"
     : slideType
     ? slideTypeLabels[slideType] ?? null
+    : null;
+  const slideTypeIcon = isColumnsSlide
+    ? <Grid3x3 size={12} />
+    : isComparisonSlide
+    ? <Scale size={12} />
+    : slideType
+    ? slideTypeIconMap[slideType] ?? null
     : null;
 
   // Comparison layout: use sideA/sideB fields when present, else split bullets or content in half
@@ -1561,15 +1590,16 @@ export default function Home() {
                         className="flex-1 px-4 text-base md:text-2xl font-black leading-tight bg-transparent border-0 outline-none min-w-0"
                         style={{ color: "#ffffff" }}
                       />
-                      {slideTypeLabel && (
+                      {slideTypeLabelText && (
                         <span
-                          className="shrink-0 text-[10px] md:text-xs font-black px-2 py-0.5 rounded-lg mr-1 select-none"
+                          className="shrink-0 text-[10px] md:text-xs font-black px-2 py-0.5 rounded-lg mr-1 select-none inline-flex items-center gap-1"
                           style={{
                             background: "rgba(255,255,255,0.2)",
                             color: "#ffffff",
                           }}
                         >
-                          {slideTypeLabel}
+                          {slideTypeIcon}
+                          {slideTypeLabelText}
                         </span>
                       )}
                       <span
@@ -2087,7 +2117,7 @@ export default function Home() {
                         </div>
                       </div>
                     ) : slideType === "fact" ? (
-                      /* ── FACT: image at top, text content below ─────────────── */
+                      /* ── FACT: image top, keyStatement callout + paragraph below ─ */
                       <div
                         className="flex-1 flex flex-col min-h-0"
                         style={{ background: contentBg }}
@@ -2096,7 +2126,7 @@ export default function Home() {
                         <div
                           className="shrink-0 relative overflow-hidden group"
                           style={{
-                            height: "45%",
+                            height: "42%",
                             borderBottom: "3px solid #e2e8f0",
                             background: "#f8fafc",
                           }}
@@ -2104,336 +2134,377 @@ export default function Home() {
                           onPaste={(e) => handleImagePaste(e, idx)}
                         >
                           {displayImage ? (
-                            !pastedEntry &&
-                            current?.imageSource === "diagram" ? (
+                            !pastedEntry && current?.imageSource === "diagram" ? (
                               <div
                                 className="w-full h-full flex items-center justify-center [&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-full overflow-hidden"
                                 dangerouslySetInnerHTML={{
-                                  __html:
-                                    styledDiagramSvg ??
-                                    (() => {
-                                      try {
-                                        const b64 = displayImage.split(",")[1];
-                                        return b64 ? atob(b64) : "";
-                                      } catch {
-                                        return "";
-                                      }
-                                    })(),
+                                  __html: styledDiagramSvg ?? (() => {
+                                    try { const b64 = displayImage.split(",")[1]; return b64 ? atob(b64) : ""; } catch { return ""; }
+                                  })(),
                                 }}
                               />
                             ) : (
-                              <img
-                                src={displayImage}
-                                alt={current?.imageAlt || ""}
-                                className="w-full h-full object-cover"
-                              />
+                              <img src={displayImage} alt={current?.imageAlt || ""} className="w-full h-full object-cover" />
                             )
-                          ) : imagesLoading ||
-                            stabilitySlides.has(idx) ||
-                            diagramLoadingSlides.has(idx) ? (
-                            <div
-                              className="w-full h-full flex items-center justify-center animate-pulse"
-                              style={{ background: "#f1f5f9" }}
-                            >
-                              <span
-                                className="text-[10px] md:text-xs font-black"
-                                style={{ color: "#94a3b8" }}
-                              >
-                                {diagramLoadingSlides.has(idx)
-                                  ? "Generating diagram…"
-                                  : stabilitySlides.has(idx)
-                                  ? "Generating AI image…"
-                                  : "Loading image…"}
+                          ) : imagesLoading || stabilitySlides.has(idx) || diagramLoadingSlides.has(idx) ? (
+                            <div className="w-full h-full flex items-center justify-center animate-pulse" style={{ background: "#f1f5f9" }}>
+                              <span className="text-[10px] md:text-xs font-black" style={{ color: "#94a3b8" }}>
+                                {diagramLoadingSlides.has(idx) ? "Generating diagram…" : stabilitySlides.has(idx) ? "Generating AI image…" : "Loading image…"}
                               </span>
                             </div>
                           ) : (
-                            <div
-                              className="w-full h-full flex flex-col items-center justify-center gap-1 cursor-pointer"
-                              style={{
-                                background: "#f9fafb",
-                                border: "2px dashed #d1d5db",
-                              }}
-                              tabIndex={0}
-                              onPaste={(e) => handleImagePaste(e, idx)}
-                            >
-                              <span className="text-2xl select-none">💡</span>
-                              <span
-                                className="text-[10px] font-black"
-                                style={{ color: "#9ca3af" }}
-                              >
-                                Paste image here
-                              </span>
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1 cursor-pointer" style={{ background: "#f9fafb", border: "2px dashed #d1d5db" }} tabIndex={0} onPaste={(e) => handleImagePaste(e, idx)}>
+                              <Star size={22} style={{ color: "#d1d5db" }} />
+                              <span className="text-[10px] font-black" style={{ color: "#9ca3af" }}>Paste image here</span>
                             </div>
                           )}
                           {displayImage && (
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center pointer-events-none">
-                              <span
-                                className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg"
-                                style={{ color: "#ffffff", background: "#166534" }}
-                              >
-                                Paste to replace (Ctrl+V)
-                              </span>
+                              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-black px-2 py-0.5 rounded-lg" style={{ color: "#ffffff", background: "#166534" }}>Paste to replace (Ctrl+V)</span>
                             </div>
                           )}
                           {imageCredit && (
-                            <div
-                              className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl"
-                              style={{
-                                color: "#166534",
-                                background: "rgba(255,255,255,0.85)",
-                              }}
-                            >
+                            <div className="absolute bottom-0 right-0 px-2 py-0.5 text-[9px] font-bold rounded-tl" style={{ color: "#166534", background: "rgba(255,255,255,0.85)" }}>
                               {imageCredit}
                             </div>
                           )}
                         </div>
-                        {/* Text below */}
-                        <div className="flex-1 px-5 md:px-7 py-3 overflow-y-auto flex flex-col justify-center">
+                        {/* Text below — keyStatement callout + paragraph */}
+                        <div className="flex-1 px-5 md:px-8 py-3 md:py-4 overflow-y-auto flex flex-col justify-center gap-3">
+                          {current?.keyStatement && idx !== 0 && (
+                            <div
+                              className="rounded-xl px-4 py-3 flex items-start gap-2"
+                              style={{ background: "#166534", border: "2px solid #14532d" }}
+                            >
+                              <Zap size={18} style={{ color: "#fde68a", flexShrink: 0, marginTop: 2 }} />
+                              {editingKey === `${idx}-ks` ? (
+                                <textarea
+                                  autoFocus
+                                  key={`ks-edit-${idx}`}
+                                  defaultValue={current.keyStatement}
+                                  onBlur={(e) => { patchSlide(idx, { keyStatement: e.target.value.trim() || current.keyStatement }); setEditingKey(null); }}
+                                  onKeyDown={(e) => { if (e.key === "Escape") setEditingKey(null); }}
+                                  rows={2}
+                                  className="text-base md:text-lg font-black leading-snug bg-transparent border-0 outline-none flex-1 resize-none"
+                                  style={{ color: "#ffffff", fieldSizing: "content" as never }}
+                                />
+                              ) : (
+                                <span
+                                  className="text-base md:text-lg font-black leading-snug flex-1 cursor-text select-text"
+                                  style={{ color: "#ffffff" }}
+                                  onClick={() => setEditingKey(`${idx}-ks`)}
+                                >
+                                  {renderInline(current.keyStatement)}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {current?.content != null ? (
                             editingContent === idx ? (
                               <textarea
                                 autoFocus
                                 key={`content-edit-${idx}`}
                                 defaultValue={current.content}
-                                onBlur={(e) => {
-                                  const t = e.target.value.trim();
-                                  if (t) patchSlide(idx, { content: t });
-                                  setEditingContent(null);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Escape") setEditingContent(null);
-                                }}
-                                className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                                style={{
-                                  color: contentTextColor,
-                                  fieldSizing: "content" as never,
-                                  minHeight: "5rem",
-                                }}
+                                onBlur={(e) => { patchSlide(idx, { content: e.target.value.trim() || null }); setEditingContent(null); }}
+                                onKeyDown={(e) => { if (e.key === "Escape") setEditingContent(null); }}
+                                className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                style={{ color: contentTextColor, fieldSizing: "content" as never, minHeight: "4rem" }}
                               />
                             ) : (
                               <div
-                                className="text-sm md:text-base leading-relaxed w-full text-center cursor-text select-text"
-                                style={{ color: contentTextColor, minHeight: "5rem" }}
+                                className="text-sm md:text-base leading-relaxed cursor-text select-text"
+                                style={{ color: contentTextColor }}
+                                onClick={() => setEditingContent(idx)}
+                              >
+                                {renderInline(current.content)}
+                              </div>
+                            )
+                          ) : (current?.bullets || []).length > 0 ? (
+                            <>
+                              {current?.formulaBox && (
+                                <div className="rounded-2xl px-6 py-5 text-center font-black text-2xl md:text-3xl tracking-wide" style={{ background: "#f0fdf4", border: "4px solid #4ade80", color: "#14532d", letterSpacing: "0.06em", boxShadow: "0 2px 12px 0 #bbf7d080" }}>
+                                  {renderInline(current.formulaBox)}
+                                </div>
+                              )}
+                              <ul className="space-y-1.5">
+                                {(current.bullets || []).map((b, i) => {
+                                  const ek = `fact-b-${idx}-${i}`;
+                                  return (
+                                    <li key={ek} className="flex items-start gap-2">
+                                      <span className="shrink-0 font-black text-sm mt-0.5" style={{ color: bulletAccentColor }}>•</span>
+                                      {editingBullet === ek ? (
+                                        <textarea autoFocus defaultValue={b}
+                                          onBlur={(e) => { const nb=[...(current.bullets||[])]; const t=e.target.value.trim(); if(t){nb[i]=t;}else{nb.splice(i,1);} patchSlide(idx,{bullets:nb}); setEditingBullet(null); }}
+                                          onKeyDown={(e) => { if(e.key==="Enter")e.currentTarget.blur(); if(e.key==="Escape")setEditingBullet(null); }}
+                                          rows={1} className="text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none"
+                                          style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                        />
+                                      ) : (
+                                        <div className="text-sm leading-snug flex-1 cursor-text select-text" style={{ color: contentTextColor }} onClick={() => setEditingBullet(ek)}>{renderInline(b)}</div>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </>
+                          ) : current?.formulaBox ? (
+                            <div className="rounded-2xl px-6 py-5 text-center font-black text-2xl md:text-3xl tracking-wide" style={{ background: "#f0fdf4", border: "4px solid #4ade80", color: "#14532d", letterSpacing: "0.06em", boxShadow: "0 2px 12px 0 #bbf7d080" }}>
+                              {renderInline(current.formulaBox)}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                    ) : slideType === "recap" ? (
+                      /* ── RECAP: centred checklist ──────────────────────────────── */
+                      <div
+                        className="flex-1 flex flex-col items-center justify-center px-6 md:px-10 py-4 overflow-y-auto"
+                        style={{ background: contentBg }}
+                      >
+                        <div className="w-full max-w-lg space-y-2 md:space-y-3">
+                          {(current?.bullets || []).map((b, i) => {
+                            const ek = `recap-${idx}-${i}`;
+                            return (
+                              <div
+                                key={ek}
+                                className="flex items-start gap-3 px-4 py-3 rounded-xl"
+                                style={{ background: "#f0fdf4", border: "2px solid #bbf7d0" }}
+                              >
+                                <CheckCircle2 size={20} style={{ color: "#166534", flexShrink: 0, marginTop: 2 }} />
+                                {editingBullet === ek ? (
+                                  <textarea autoFocus defaultValue={b}
+                                    onBlur={(e) => { const nb=[...(current.bullets||[])]; const t=e.target.value.trim(); if(t){nb[i]=t;}else{nb.splice(i,1);} patchSlide(idx,{bullets:nb}); setEditingBullet(null); }}
+                                    onKeyDown={(e) => { if(e.key==="Enter")e.currentTarget.blur(); if(e.key==="Escape")setEditingBullet(null); }}
+                                    rows={1} className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none flex-1 min-w-0 resize-none"
+                                    style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                  />
+                                ) : (
+                                  <div className="text-sm md:text-base leading-relaxed flex-1 cursor-text select-text" style={{ color: contentTextColor }} onClick={() => setEditingBullet(ek)}>
+                                    {renderInline(b)}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <button
+                            onClick={() => patchSlide(idx, { bullets: [...(current?.bullets || []), "New takeaway"] })}
+                            className="mt-1 text-[10px] md:text-xs font-black px-3 py-1 rounded-lg"
+                            style={{ color: "#166534", border: "2px solid #bbf7d0", background: "#f0fdf4" }}
+                          >
+                            + Add item
+                          </button>
+                        </div>
+                      </div>
+
+                    ) : isNoImageSlide && (slideType === "reflection" || slideType === "question") ? (
+                      /* ── REFLECTION / QUESTION: centred with icon + big text ───── */
+                      <div
+                        className="flex-1 flex flex-col items-center justify-center px-8 md:px-14 py-6"
+                        style={{ background: contentBg }}
+                      >
+                        <div className="text-center max-w-xl w-full">
+                          <div className="flex justify-center mb-4">
+                            {slideType === "question"
+                              ? <HelpCircle size={44} style={{ color: "#166534", opacity: 0.7 }} />
+                              : <MessageCircle size={44} style={{ color: "#166534", opacity: 0.7 }} />
+                            }
+                          </div>
+                          {current?.content != null ? (
+                            editingContent === idx ? (
+                              <textarea
+                                autoFocus
+                                key={`content-edit-${idx}`}
+                                defaultValue={current.content}
+                                onBlur={(e) => { patchSlide(idx, { content: e.target.value.trim() || null }); setEditingContent(null); }}
+                                onKeyDown={(e) => { if (e.key === "Escape") setEditingContent(null); }}
+                                placeholder="Write your reflection prompt…"
+                                className="text-base md:text-xl leading-relaxed italic bg-transparent border-0 outline-none w-full resize-none text-center"
+                                style={{ color: contentTextColor, fieldSizing: "content" as never, minHeight: "5rem" }}
+                              />
+                            ) : (
+                              <div
+                                className="text-base md:text-xl leading-relaxed italic cursor-text select-text"
+                                style={{ color: contentTextColor }}
                                 onClick={() => setEditingContent(idx)}
                               >
                                 {renderInline(current.content)}
                               </div>
                             )
                           ) : (
-                            <div className="flex flex-col">
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                                {(current?.bullets || []).map((b, i) => {
-                                  const editKey = `col-${idx}-${i}`;
-                                  const isEditing = editingBullet === editKey;
-                                  const numberedMatch = b.match(/^(\d+)[.)]\s+([\s\S]*)$/);
-                                  const marker = numberedMatch ? `${numberedMatch[1]}.` : "•";
-                                  const displayText = numberedMatch ? numberedMatch[2] : b;
-                                  return (
-                                    <div
-                                      key={editKey}
-                                      className="flex items-start gap-1.5"
-                                    >
-                                      <span
-                                        className="mt-0.5 shrink-0 font-black text-sm leading-snug"
-                                        style={{ color: bulletAccentColor }}
-                                      >
-                                        {marker}
-                                      </span>
-                                      {isEditing ? (
-                                        <textarea
-                                          autoFocus
-                                          defaultValue={b}
-                                          onBlur={(e) => {
-                                            const nb = [...(current?.bullets || [])];
-                                            const t = e.target.value.trim();
-                                            if (t) { nb[i] = t; } else { nb.splice(i, 1); }
-                                            patchSlide(idx, { bullets: nb });
-                                            setEditingBullet(null);
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") e.currentTarget.blur();
-                                            if (e.key === "Escape") setEditingBullet(null);
-                                          }}
-                                          rows={1}
-                                          className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none overflow-hidden"
-                                          style={{ color: contentTextColor, fieldSizing: "content" as never }}
-                                        />
-                                      ) : (
-                                        <div
-                                          className="text-xs md:text-sm leading-snug flex-1 cursor-text select-text"
-                                          style={{ color: contentTextColor }}
-                                          onClick={() => setEditingBullet(editKey)}
-                                        >
-                                          {renderInline(displayText)}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                              <button
-                                onClick={() =>
-                                  patchSlide(idx, {
-                                    bullets: [
-                                      ...(current?.bullets || []),
-                                      "New point",
-                                    ],
-                                  })
-                                }
-                                className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
-                                style={{
-                                  color: bulletAccentColor,
-                                  border: `2px solid ${bulletAccentColor}`,
-                                }}
-                              >
-                                + Add bullet
-                              </button>
-                            </div>
+                            <textarea
+                              key={`reflect-placeholder-${idx}`}
+                              placeholder="Write your reflection prompt…"
+                              className="text-base md:text-xl leading-relaxed italic bg-transparent border-0 outline-none w-full resize-none text-center"
+                              style={{ color: contentTextColor, minHeight: "5rem" }}
+                              onBlur={(e) => { const t = e.target.value.trim(); if (t) patchSlide(idx, { content: t }); }}
+                            />
                           )}
                         </div>
                       </div>
+
                     ) : (
-                      /* ── STANDARD layout: text left, image sidebar right ─────── */
+                      /* ── STANDARD layout: rich text left, image sidebar right ──── */
                       <div className="flex flex-1 min-h-0">
                         {/* Text content */}
                         <div
-                          className="relative flex-1 px-3 md:px-7 py-3 md:py-4 flex flex-col overflow-hidden items-center"
+                          className="relative flex-1 px-4 md:px-7 py-3 md:py-5 flex flex-col justify-center overflow-y-auto gap-3"
                           style={{ background: contentBg }}
                         >
                           {/* Paste image button — small floating btn at right edge when no image */}
                           {!isNoImageSlide && !displayImage && !imagesLoading && !stabilitySlides.has(idx) && !diagramLoadingSlides.has(idx) && (
-                            <div
-                              className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
-                              tabIndex={0}
-                              onPaste={(e) => handleImagePaste(e, idx)}
-                              title="Click here and paste an image (Ctrl+V)"
-                            >
-                              <div
-                                className="flex items-center gap-1 px-2 py-1 rounded-lg cursor-pointer text-[9px] font-black select-none"
-                                style={{
-                                  background: "#f1f5f9",
-                                  border: "1.5px dashed #cbd5e1",
-                                  color: "#94a3b8",
-                                }}
-                              >
-                                <span>📎</span>
-                                <span>Paste image</span>
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10" tabIndex={0} onPaste={(e) => handleImagePaste(e, idx)} title="Click here and paste an image (Ctrl+V)">
+                              <div className="flex items-center gap-1 px-2 py-1 rounded-lg cursor-pointer text-[9px] font-black select-none" style={{ background: "#f1f5f9", border: "1.5px dashed #cbd5e1", color: "#94a3b8" }}>
+                                <span>📎</span><span>Paste image</span>
                               </div>
                             </div>
                           )}
-                          {current?.content != null ? (
-                            /* Upper grades: editable paragraph */
-                            <div className="flex flex-col justify-center flex-1 w-full overflow-hidden">
-                              {editingContent === idx ? (
+
+                          {/* formulaBox — hero element for formula slides */}
+                          {current?.formulaBox && (
+                            <div className="rounded-2xl px-6 py-5 text-center font-black text-2xl md:text-3xl tracking-wide" style={{ background: "#f0fdf4", border: "4px solid #4ade80", color: "#14532d", letterSpacing: "0.06em", boxShadow: "0 2px 12px 0 #bbf7d080" }}>
+                              {renderInline(current.formulaBox)}
+                            </div>
+                          )}
+
+                          {/* keyStatement accent bar — for fact-like callouts in secondary slides */}
+                          {current?.keyStatement && (
+                            <div
+                              className="rounded-lg px-4 py-2.5 flex items-start gap-2"
+                              style={{ background: "#f0fdf4", borderLeft: "4px solid #166534" }}
+                            >
+                              <Zap size={16} style={{ color: "#166534", flexShrink: 0, marginTop: 2 }} />
+                              {editingKey === `${idx}-ks` ? (
                                 <textarea
                                   autoFocus
-                                  key={`content-edit-${idx}`}
-                                  defaultValue={current.content}
-                                  onBlur={(e) => {
-                                    patchSlide(idx, { content: e.target.value });
-                                    setEditingContent(null);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Escape") setEditingContent(null);
-                                  }}
-                                  placeholder="Type here…"
-                                  className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                                  style={{
-                                    color: contentTextColor,
-                                    fieldSizing: "content" as never,
-                                    minHeight: "5rem",
-                                  }}
+                                  key={`ks-edit-${idx}`}
+                                  defaultValue={current.keyStatement}
+                                  onBlur={(e) => { patchSlide(idx, { keyStatement: e.target.value.trim() || current.keyStatement }); setEditingKey(null); }}
+                                  onKeyDown={(e) => { if (e.key === "Escape") setEditingKey(null); }}
+                                  rows={1}
+                                  className="text-sm md:text-base font-black leading-snug bg-transparent border-0 outline-none flex-1 resize-none"
+                                  style={{ color: "#166534", fieldSizing: "content" as never }}
                                 />
                               ) : (
-                                <div
-                                  className="text-sm md:text-base leading-relaxed w-full text-center cursor-text select-text"
-                                  style={{ color: contentTextColor, minHeight: "5rem" }}
-                                  onClick={() => setEditingContent(idx)}
+                                <span
+                                  className="text-sm md:text-base font-black leading-snug flex-1 cursor-text select-text"
+                                  style={{ color: "#166534" }}
+                                  onClick={() => setEditingKey(`${idx}-ks`)}
                                 >
-                                  {renderInline(current.content)}
-                                </div>
+                                  {renderInline(current.keyStatement)}
+                                </span>
                               )}
                             </div>
-                          ) : (
-                            /* Primary grades: bullet list */
-                            <div
-                              className={`flex flex-col justify-center flex-1 overflow-y-auto ${
-                                isNoImageSlide ? "max-w-lg mx-auto w-full" : ""
-                              }`}
-                            >
-                              {isNoImageSlide &&
-                                (current?.bullets || []).length === 0 && (
+                          )}
+
+                          {current?.content != null ? (
+                            /* Secondary grades — paragraph */
+                            <>
+                              <div className="flex-shrink-0">
+                                {editingContent === idx ? (
                                   <textarea
-                                    key={`noimgplaceholder-${idx}`}
-                                    placeholder="Write your response here…"
-                                    className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
-                                    style={{
-                                      color: contentTextColor,
-                                      minHeight: "5rem",
-                                    }}
-                                    onBlur={(e) => {
-                                      const t = e.target.value.trim();
-                                      if (t) patchSlide(idx, { bullets: [t] });
-                                    }}
+                                    autoFocus
+                                    key={`content-edit-${idx}`}
+                                    defaultValue={current.content}
+                                    onBlur={(e) => { patchSlide(idx, { content: e.target.value.trim() || null }); setEditingContent(null); }}
+                                    onKeyDown={(e) => { if (e.key === "Escape") setEditingContent(null); }}
+                                    placeholder="Type here…"
+                                    className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none"
+                                    style={{ color: contentTextColor, fieldSizing: "content" as never, minHeight: "4rem" }}
                                   />
+                                ) : (
+                                  <div
+                                    className="text-sm md:text-base leading-relaxed cursor-text select-text"
+                                    style={{ color: contentTextColor }}
+                                    onClick={() => setEditingContent(idx)}
+                                  >
+                                    {renderInline(current.content)}
+                                  </div>
                                 )}
-                              <ul className="space-y-1.5 md:space-y-3">
+                              </div>
+                              {/* Supporting bullets below paragraph (intro/example) */}
+                              {(current?.bullets || []).length > 0 && (
+                                <ul className="space-y-1.5 mt-1">
+                                  {(current.bullets || []).map((b, i) => {
+                                    const ek = `sup-${idx}-${i}`;
+                                    const isEx = slideType === "example";
+                                    return (
+                                      <li key={ek} className="flex items-start gap-2">
+                                        <span className="shrink-0 mt-1" style={{ color: bulletAccentColor }}>
+                                          {isEx ? <Lightbulb size={14} /> : <span className="font-black text-sm">›</span>}
+                                        </span>
+                                        {editingBullet === ek ? (
+                                          <textarea autoFocus defaultValue={b}
+                                            onBlur={(e) => { const nb=[...(current.bullets||[])]; const t=e.target.value.trim(); if(t){nb[i]=t;}else{nb.splice(i,1);} patchSlide(idx,{bullets:nb}); setEditingBullet(null); }}
+                                            onKeyDown={(e) => { if(e.key==="Enter")e.currentTarget.blur(); if(e.key==="Escape")setEditingBullet(null); }}
+                                            rows={1} className="text-xs md:text-sm leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none"
+                                            style={{ color: contentTextColor, fieldSizing: "content" as never }}
+                                          />
+                                        ) : (
+                                          <div className="text-xs md:text-sm leading-snug flex-1 cursor-text select-text" style={{ color: contentTextColor }} onClick={() => setEditingBullet(ek)}>
+                                            {renderInline(b)}
+                                          </div>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
+                                  <button onClick={() => patchSlide(idx, { bullets: [...(current?.bullets || []), "New point"] })}
+                                    className="mt-1 text-[10px] md:text-xs font-black px-2 py-0.5 rounded"
+                                    style={{ color: bulletAccentColor, border: `2px solid ${bulletAccentColor}` }}>
+                                    + Add bullet
+                                  </button>
+                                </ul>
+                              )}
+                            </>
+                          ) : (
+                            /* Primary grades — bullet list */
+                            <div className={`flex flex-col justify-center flex-1 overflow-y-auto ${isNoImageSlide ? "max-w-lg mx-auto w-full" : ""}`}>
+                              {isNoImageSlide && (current?.bullets || []).length === 0 && (
+                                <textarea
+                                  key={`noimgplaceholder-${idx}`}
+                                  placeholder="Write your response here…"
+                                  className="text-sm md:text-base leading-relaxed bg-transparent border-0 outline-none w-full resize-none text-center"
+                                  style={{ color: contentTextColor, minHeight: "5rem" }}
+                                  onBlur={(e) => { const t = e.target.value.trim(); if (t) patchSlide(idx, { bullets: [t] }); }}
+                                />
+                              )}
+                              <ul className="space-y-2 md:space-y-3">
                                 {(current?.bullets || []).map((b, i) => {
-                                  const editKey = `${idx}-${i}`;
-                                  const isEditing = editingBullet === editKey;
-                                  const numberedMatch = b.match(/^(\d+)[.)]\s+([\s\S]*)$/);
-                                  const marker = numberedMatch
+                                  const ek = `${idx}-${i}`;
+                                  const isQuizOpt = slideType === "quiz";
+                                  const alphaMatch = b.match(/^([A-D])\.\s+([\s\S]*)$/);
+                                  const numberedMatch = !alphaMatch && b.match(/^(\d+)[.)]\s+([\s\S]*)$/);
+                                  const marker = isQuizOpt && alphaMatch
+                                    ? alphaMatch[1]
+                                    : numberedMatch
                                     ? `${numberedMatch[1]}.`
                                     : "•";
-                                  const displayText = numberedMatch ? numberedMatch[2] : b;
+                                  const displayText = alphaMatch ? alphaMatch[2] : numberedMatch ? numberedMatch[2] : b;
+                                  const isCorrect = isQuizOpt && typeof current?.correctIndex === "number" && current.correctIndex === i;
                                   return (
-                                    <li
-                                      key={editKey}
-                                      className="flex items-start gap-2 md:gap-3"
-                                    >
-                                      <span
-                                        className="mt-0.5 shrink-0 font-black text-base md:text-lg leading-snug"
-                                        style={{ color: bulletAccentColor }}
-                                      >
-                                        {marker}
-                                      </span>
-                                      {isEditing ? (
-                                        <textarea
-                                          autoFocus
-                                          defaultValue={b}
-                                          onBlur={(e) => {
-                                            const newBullets = [
-                                              ...(current?.bullets || []),
-                                            ];
-                                            const trimmed = e.target.value.trim();
-                                            if (trimmed) {
-                                              newBullets[i] = trimmed;
-                                            } else {
-                                              newBullets.splice(i, 1);
-                                            }
-                                            patchSlide(idx, { bullets: newBullets });
-                                            setEditingBullet(null);
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter")
-                                              e.currentTarget.blur();
-                                            if (e.key === "Escape")
-                                              setEditingBullet(null);
-                                          }}
-                                          rows={1}
-                                          className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none overflow-hidden"
+                                    <li key={ek} className="flex items-start gap-2 md:gap-3">
+                                      {isQuizOpt ? (
+                                        <span
+                                          className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-black leading-none"
                                           style={{
-                                            color: contentTextColor,
-                                            fieldSizing: "content" as never,
-                                            fontWeight: 400,
+                                            background: isCorrect ? "#166534" : "#e5e7eb",
+                                            color: isCorrect ? "#ffffff" : "#374151",
+                                            border: "2px solid " + (isCorrect ? "#14532d" : "#d1d5db"),
                                           }}
+                                        >
+                                          {marker}
+                                        </span>
+                                      ) : (
+                                        <span className="mt-0.5 shrink-0 font-black text-base md:text-lg leading-snug" style={{ color: bulletAccentColor }}>{marker}</span>
+                                      )}
+                                      {editingBullet === ek ? (
+                                        <textarea autoFocus defaultValue={b}
+                                          onBlur={(e) => { const nb=[...(current?.bullets||[])]; const t=e.target.value.trim(); if(t){nb[i]=t;}else{nb.splice(i,1);} patchSlide(idx,{bullets:nb}); setEditingBullet(null); }}
+                                          onKeyDown={(e) => { if(e.key==="Enter")e.currentTarget.blur(); if(e.key==="Escape")setEditingBullet(null); }}
+                                          rows={1} className="text-xs md:text-base leading-snug bg-transparent border-0 outline-none flex-1 min-w-0 resize-none overflow-hidden"
+                                          style={{ color: contentTextColor, fieldSizing: "content" as never, fontWeight: 400 }}
                                         />
                                       ) : (
-                                        <div
-                                          className="text-xs md:text-base leading-snug flex-1 cursor-text select-text"
-                                          style={{ color: contentTextColor }}
-                                          onClick={() => setEditingBullet(editKey)}
-                                        >
+                                        <div className="text-xs md:text-base leading-snug flex-1 cursor-text select-text" style={{ color: contentTextColor }} onClick={() => setEditingBullet(ek)}>
                                           {renderInline(displayText)}
                                         </div>
                                       )}
@@ -2441,21 +2512,9 @@ export default function Home() {
                                   );
                                 })}
                               </ul>
-                              <button
-                                onClick={() =>
-                                  patchSlide(idx, {
-                                    bullets: [
-                                      ...(current?.bullets || []),
-                                      "New point",
-                                    ],
-                                  })
-                                }
-                                className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded transition-all"
-                                style={{
-                                  color: bulletAccentColor,
-                                  border: `2px solid ${bulletAccentColor}`,
-                                }}
-                              >
+                              <button onClick={() => patchSlide(idx, { bullets: [...(current?.bullets || []), "New point"] })}
+                                className="mt-2 self-start text-[10px] md:text-xs font-black px-2 py-0.5 rounded"
+                                style={{ color: bulletAccentColor, border: `2px solid ${bulletAccentColor}` }}>
                                 + Add bullet
                               </button>
                             </div>

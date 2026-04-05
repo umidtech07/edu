@@ -34,8 +34,16 @@ async function detectTopicType(topic: string): Promise<string> {
 - "narrative" — chronological story or historical arc
 - "comparison" — explicitly comparing two distinct things
 - "cause-effect" — explains causes and/or effects of something
-- "formula" — a mathematical theorem, grammar tense/rule, or scientific law with compact notation
+- "formula" — MANDATORY for ANY grammar/language topic (tenses, parts of speech, sentence structure, punctuation, voice, conjugation, etc.), ANY mathematics topic (theorems, equations, formulas, operations, geometry/algebra rules, etc.), and ANY physics or chemistry law or equation — ALL such topics MUST be "formula". Tense names (present simple, past continuous, present perfect, etc.) always → formula.
 - "single-subject" — one focused concept that doesn't fit above
+
+Examples:
+"the present simple" → formula
+"present perfect tense" → formula
+"passive voice" → formula
+"photosynthesis" → process
+"Newton's second law" → formula
+"the solar system" → collection
 
 Topic: "${topic}"
 Return ONLY JSON: {"topicType":"string"}`,
@@ -55,7 +63,7 @@ function buildCategoryActivityRules(topicType: string, isPrimary: boolean): stri
     case "formula":
       return `\nCategory focus (FORMULA): fill-in-the-blank = blank out notation (e.g. "S + ___ + V3"); multiple-choice = pick correct form for a scenario; matching = components to roles; short-answer = write own example.`;
     case "process":
-      return `\nCategory focus (PROCESS): fill-in-the-blank = blank stage names/action verbs; multiple-choice = next step questions; matching = stages to outputs; short-answer = explain why a step matters.`;
+      return `\nCategornowy focus (PROCESS): fill-in-the-blank = blank stage names/action verbs; multiple-choice = next step questions; matching = stages to outputs; short-answer = explain why a step matters.`;
     case "narrative":
       return `\nCategory focus (NARRATIVE): fill-in-the-blank = blank names/dates/events; multiple-choice = who/when/result questions; matching = people/places to roles; short-answer = explain significance.`;
     case "collection":
