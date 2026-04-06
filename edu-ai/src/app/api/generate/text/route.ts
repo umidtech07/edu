@@ -182,7 +182,7 @@ ${itemLines}
 // ── Per-category slide content schemas ───────────────────────────────────────
 // Each category has a distinct JSON shape per slide type so every deck feels
 // structurally different and is optimised for teaching that content type.
-// The cheap gpt-4.1-nano pre-pass sets `topicType`; these schemas drive the
+// The gpt-4.1-mini pre-pass sets `topicType`; these schemas drive the
 // per-slide content calls in phase 2.
 
 const CATEGORY_SLIDE_SCHEMAS: Record<
@@ -447,7 +447,7 @@ async function classifyTopicCategory(topic: string): Promise<string> {
   ];
   try {
     const result = await openai.chat.completions.create({
-      model: "gpt-4.1-nano",
+      model: "gpt-4.1-mini",
       temperature: 0,
       max_tokens: 10,
       messages: [
@@ -512,7 +512,7 @@ async function getStructureItems(
   const hint = ITEM_HINT[topicType] ?? "the key items to cover";
   try {
     const result = await openai.chat.completions.create({
-      model: "gpt-4.1-nano",
+      model: "gpt-4.1-mini",
       temperature: 0,
       max_tokens: 300,
       messages: [
@@ -1457,7 +1457,7 @@ export async function POST(req: Request) {
     });
 
     const outlineCompletion = await openai.chat.completions.create({
-      model: "gpt-4.1-nano",
+      model: "gpt-4.1-mini",
       temperature: 0.4,
       max_tokens: 2200,
       response_format: { type: "json_object" },
@@ -1522,9 +1522,7 @@ export async function POST(req: Request) {
 
         return openai.chat.completions
           .create({
-            // Formula/grammar topics use mini for better factual accuracy (V-ing vs V3, etc.)
-            model:
-              safeTopicType === "formula" ? "gpt-4.1-mini" : "gpt-4.1-nano",
+            model: "gpt-4.1-mini",
             temperature: safeTopicType === "formula" ? 0.3 : 0.9,
             max_tokens: isPrimary ? 500 : 900,
             response_format: { type: "json_object" },
@@ -2085,7 +2083,7 @@ export async function POST(req: Request) {
       if (toTranslate.length > 0) {
         try {
           const tx = await openai.chat.completions.create({
-            model: "gpt-4.1-nano",
+            model: "gpt-4.1-mini",
             temperature: 0,
             messages: [
               {

@@ -22,7 +22,7 @@ function safeJsonParse(text: string) {
 async function detectTopicType(topic: string): Promise<string> {
   try {
     const result = await openai.chat.completions.create({
-      model: "gpt-4.1-nano",
+      model: "gpt-4.1-mini",
       temperature: 0,
       max_tokens: 60,
       messages: [
@@ -200,7 +200,7 @@ Rules:
 ${categoryRules}${activityLanguageInstruction}`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4.1-nano",
+      model: "gpt-4.1-mini",
       temperature: 0.5,
       response_format: { type: "json_object" },
       messages: [
